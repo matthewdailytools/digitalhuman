@@ -68,6 +68,14 @@ class RendererTests(unittest.TestCase):
                     render(config, Path(directory) / "output.mp4")
                 launch.assert_not_called()
 
+    def test_windows_line_endings_do_not_invalidate_identical_code(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "script.py"
+            path.write_bytes(b"print('same')\n")
+            before = render_settings.sha256(path)
+            path.write_bytes(b"print('same')\r\n")
+            self.assertEqual(before, render_settings.sha256(path))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -19,6 +19,11 @@ def tool_paths():
 
 
 def sha256(path):
+    path = Path(path)
+    if path.suffix == ".py":
+        # Git may rewrite LF/CRLF on Windows checkout; identical code keeps its cache identity.
+        content = path.read_text(encoding="utf-8-sig")
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
     with Path(path).open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
