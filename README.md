@@ -8,7 +8,7 @@
 
 ## 简化人物场景
 
-`tools/create_head_scene.py` 用 Blender 自带几何建立测试头部与半身，包含静态网格头发、简化眼部开合、轻微转头和呼吸。资产由脚本生成，无外部贴图或模型依赖。它是流程测试人物，尚非真人级角色；眼部开合采用几何缩放，嘴部保持闭合，尚未实现真实眼睑或语音口型。
+`tools/create_head_scene.py` 用 Blender 自带几何建立测试头部与半身，包含静态网格头发、简化眼部开合、轻微转头和呼吸。资产由脚本生成，无外部贴图或模型依赖。它是流程测试人物，尚非真人级角色；眼部开合采用几何缩放，嘴部支持简化 Shape Key 口型，无 TTS 输入时保持闭合，尚未实现真实眼睑与口腔解剖。
 
 生成 720p 静帧及可编辑 .blend：
 
@@ -48,7 +48,25 @@ ffmpeg -framerate 24 -start_number 1 -i work\head-scene-v1\animation\frame_%04d.
 
 ## 当前实现边界
 
-本仓库已实现 Python 标准库缓存管线和 Blender 离线生成器，支持完整渲染、编码、帧数 / 格式 / 音轨检查、解码后发布缓存。尚未接入 Unreal 或外部 AI API。运行时播放预渲染视频，不在本机实时渲染人物；当前人物没有语音口型。
+本仓库已实现 Python 标准库缓存管线、Blender 离线生成器和模拟 TTS 嘴型输入，支持完整渲染、编码、帧数 / 格式 / 音轨检查、解码后发布缓存。尚未接入 Unreal 或外部 AI API。运行时播放预渲染视频，不在本机实时渲染人物。
+
+## 第五步模拟 TTS 与嘴型
+
+```powershell
+.\.venv\Scripts\python.exe tools\mock_tts.py
+.\.venv\Scripts\python.exe cache_pipeline.py prepare --config work\mock-tts\render-config.json --command-file renderer-command.json
+.\.venv\Scripts\python.exe cache_pipeline.py play --config work\mock-tts\render-config.json
+```
+
+第一条命令用 Windows 自带中文 SAPI 语音制作模拟 API 返回数据，无网络请求，不安装本地 AI 模型。测试文本由 fixtures/mock-tts-request.json 定义，默认“爸、妈，啊、诶、衣、哦、乌、飞。”。修改测试词时须同时提供 visemes 映射；这不是任意中文文本到音素的自动对齐器。
+
+输出为 audio.wav、tts.json 和 render-config.json。tts.json 记录原文、音频路径与 SHA-256、真实音频时长、秒制口型事件、测试音节及停顿；每个事件包含 start、end、viseme、可选 strength。真实提供商以后转换成同样的 WAV 与事件格式即可接入。
+
+嘴唇与口部自动创建 REST、MBP、A、E、I、O、U、FV 八种状态，并以 Shape Key 烘焙，下颌随开口权重运动；相邻事件平滑过渡，空白区间与结尾回到 REST。FV 仅是初级示意形状，没有真实牙齿接触；模型没有舌头、真实口腔或完整面部肌肉系统。
+
+模拟时间戳按单独合成的音节编排，明确标为 synthetic-syllable-timing-not-forced-alignment，不能当作真实中文音素精度评估。缓存同时绑定音频和事件文件内容，改时间轴也会失效。
+
+本次已生成的演示为 work/mock-tts/demo.mp4，可编辑工程为 work/mock-tts/demo.blend。测试结果与截图位于同目录的 shape-check、final-validation、integration-result.json。validate_lipsync.py 会重新加载 .blend 检查实际口部几何、口型权重、停顿与末帧闭嘴；该脚本针对默认测试语料，不适用于任意真实台词。demo 文件是本次测试的导出副本，重新生成后以新任务目录或缓存为准。
 
 ## 一条命令自动生成
 
@@ -59,9 +77,9 @@ ffmpeg -framerate 24 -start_number 1 -i work\head-scene-v1\animation\frame_%04d.
 
 第一次读取配置快照并调用 Blender → PNG 序列 → H.264 视频 → ffprobe 检查 → 完整解码 → 缓存。第二次同样的 prepare 输出 CACHE HIT，不启动 Blender。工作文件、可编辑场景和日志保留在 work/render-jobs 的独立任务目录。
 
-实际可设置的参数：quality.width / height（偶数）、fps、samples、hair（none / static），performance.frames。初级生成器只支持 draft / simple / bust、固定半身镜头及中性眨眼动作；不支持的选项报错。profiles preview / final、任意人物、表情和 TTS 尚未实现。
+实际可设置的参数：quality.width / height（偶数）、fps、samples、hair（none / static），performance.frames。初级生成器支持 draft / simple / bust、固定半身或 head-closeup 镜头及中性眨眼动作；不支持的选项报错。profiles preview / final、任意人物、复杂表情和外部 TTS 服务尚未实现。
 
-预录音频可选：在 performance 增加 audio_file（项目相对路径或绝对路径）。程序记录音频内容哈希，检查时长不超过 frames/fps，较短音频补静音；它只测试音视频合成，不会驱动嘴型。text 必须为空，防止输入台词却生成无声闭嘴视频。
+预录音频可选：performance.audio_file 仅合成音画，不产生嘴型。需要嘴型时提供 performance.tts_file，且 text 必须与事件文件一致；系统自动采用其中音频。音频与事件时长不得超过 frames/fps，音轨尾部补静音。只有台词而无 TTS 事件文件会明确报错。
 
 内置生成器自动把场景代码、生成器代码及本机工具路径、大小和修改时间纳入缓存签名；Python 源码统一换行后计算签名，Git 的 LF / CRLF 转换不会误触发重建。音频文件变化也会使缓存失效。生成前后检查配置快照一致性。该签名用于本机开发，外部模型与资产仍须自行版本管理。
 

@@ -10,6 +10,7 @@ import time
 import uuid
 
 from render_settings import PROJECT, resolve, sha256, tool_paths
+from speech import load_bundle
 
 
 def probe(executable, path, count_frames=False):
@@ -78,13 +79,25 @@ def render(config_path, output):
             if duration <= 0 or duration > performance["frames"] / quality["fps"] + 0.01:
                 raise ValueError("Audio must fit the configured frame timeline; increase frames")
             report["has_audio"] = True
+        speech_args = []
+        if performance.get("tts_file"):
+            if sha256(performance["tts_file"]) != performance["tts_sha256"]:
+                raise ValueError("TTS bundle changed after cache configuration was resolved")
+            bundle = load_bundle(performance["tts_file"])
+            bundle["audio_file"] = str(audio)
+            speech_path = job / "tts.json"
+            speech_path.write_text(json.dumps(bundle, ensure_ascii=False, indent=2), encoding="utf-8")
+            speech_args = ["--tts-file", str(speech_path)]
+            report["speech_source"] = bundle.get("source", "unspecified")
+            report["alignment"] = bundle.get("alignment", "unspecified")
         frames = job / "frames"
         run_stage("blender", [tools["blender"], "--background", "--factory-startup",
                   "--python-exit-code", "1", "--python", str(PROJECT / "tools/create_head_scene.py"),
                   "--", "--output", str(frames), "--render", "animation",
                   "--width", str(quality["width"]), "--height", str(quality["height"]),
                   "--fps", str(quality["fps"]), "--samples", str(quality["samples"]),
-                  "--frames", str(performance["frames"]), "--hair", quality["hair"]], 1800)
+                  "--frames", str(performance["frames"]), "--hair", quality["hair"],
+                  "--camera", config["scene"]["camera"], *speech_args], 1800)
         for frame in range(1, performance["frames"] + 1):
             image = frames / f"frame_{frame:04d}.png"
             if not image.is_file() or image.stat().st_size == 0:

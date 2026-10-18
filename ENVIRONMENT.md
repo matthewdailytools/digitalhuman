@@ -117,3 +117,25 @@ Python 网络 socket 被禁止时，缓存播放路径解析仍成功。系统�
 ```
 
 支持修改分辨率、fps、samples、头发开关和动画帧数，未知设置会报错。默认人物配置 prototype.json 和历史导入缓存继续保留。下一步为嘴型控制，再接外部 TTS 与面驱。
+
+## 第五步模拟 TTS 嘴型验证
+
+已自动创建 REST、MBP、A、E、I、O、U、FV 状态，并以 Shape Key 驱动嘴唇、口部和简化下颌。没有 TTS 时间轴时保持闭嘴。人物仍为技术测试人偶，FV 不含真实唇齿接触，尚无舌头或完整口腔。
+
+用系统已有 Microsoft Huihui 中文语音为“爸、妈，啊、诶、衣、哦、乌、飞。”生成测试音频，再按音节拼接模拟 TTS 事件，不调用外部 API。音频 3.628 秒，12 个口型事件、9 段停顿；模拟事件不属于真实强制对齐结果。
+
+验证结果：
+
+- 18 项自动测试通过，覆盖非法 / 重叠时间戳、权重越界、平滑过渡、静音与结束闭嘴、音频哈希 / 时长不一致、改事件时间轴导致缓存失效。
+- 重新加载实际 Blender 工程，检查八种状态的几何宽度、开口、权重与 9 段停顿，末帧闭嘴。
+- 模拟事件中点到最近 24fps 帧的最大量化偏差为 20.612ms；这不是实测语音音素误差。
+- 960×540、24fps、90 帧、3.75 秒，H.264 + AAC，视频与音轨检查及完整解码通过；最终 Blender 阶段约 37.317 秒。
+- 所有预设停顿音频采样为零，所有测试音节有有效音频；最终二次 prepare 约 0.154 秒，未创建新渲染任务。已启动缓存播放，语音听感与主观自然度仍需人工评价。
+
+输入、音频、事件、截图与报告位于 work/mock-tts；逐任务场景与视频保留在 work/render-jobs。关键控制器为 MouthLips / MouthInterior 的 Shape Key 与 Head 的 JawOpen，时间基准 t=(frame-1)/fps。
+
+```powershell
+.\.venv\Scripts\python.exe tools\mock_tts.py
+.\.venv\Scripts\python.exe cache_pipeline.py prepare --config work\mock-tts\render-config.json --command-file renderer-command.json
+.\.venv\Scripts\python.exe cache_pipeline.py play --config work\mock-tts\render-config.json
+```

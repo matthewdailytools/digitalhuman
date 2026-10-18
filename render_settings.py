@@ -31,13 +31,13 @@ def sha256(path):
 def validate(config):
     expected = {
         "character": {"id": "procedural-head", "revision": "v1"},
-        "scene": {"revision": "v1", "camera": "fixed-half-body", "lighting": "three-area-lights"},
+        "scene": {"revision": "v1", "lighting": "three-area-lights"},
     }
     allowed = {
         "schema_version": None, "character": set(expected["character"]),
-        "scene": set(expected["scene"]),
+        "scene": set(expected["scene"]) | {"camera"},
         "quality": {"profile", "width", "height", "fps", "samples", "hair", "skin", "body"},
-        "performance": {"text", "expression", "motion_revision", "frames", "audio_file", "audio_sha256"},
+        "performance": {"text", "expression", "motion_revision", "frames", "audio_file", "audio_sha256", "tts_file", "tts_sha256"},
         "generator": {"id", "revision", "resolved_signature"},
     }
     unknown = set(config) - set(allowed)
@@ -57,6 +57,8 @@ def validate(config):
             if config[section].get(name) != value:
                 raise ValueError(f"Unsupported {section}.{name}; currently requires {value}")
     quality, performance = config["quality"], config["performance"]
+    if config["scene"].get("camera") not in ("fixed-half-body", "head-closeup"):
+        raise ValueError("Unsupported camera")
     for name, lo, hi in (("width", 64, 1920), ("height", 64, 1080), ("fps", 1, 60), ("samples", 1, 64)):
         value = quality.get(name)
         if type(value) is not int or not lo <= value <= hi:
@@ -70,8 +72,8 @@ def validate(config):
     frames = performance.get("frames")
     if type(frames) is not int or not 2 <= frames <= quality["fps"] * 30:
         raise ValueError("frames must describe 2 frames to 30 seconds")
-    if performance.get("text") != "":
-        raise ValueError("Text-to-speech is not connected; text must be empty. Supply audio_file if needed")
+    if not isinstance(performance.get("text"), str) or (performance["text"] and not performance.get("tts_file")):
+        raise ValueError("Nonempty text requires a TTS timing bundle")
     if performance.get("expression") != "neutral-with-blink" or performance.get("motion_revision") != "idle-v1":
         raise ValueError("Only neutral-with-blink expression and idle-v1 motion are implemented")
     if config["generator"].get("id") != GENERATOR_ID or config["generator"].get("revision") != "v1":
@@ -82,6 +84,23 @@ def resolve(config):
     config = copy.deepcopy(config)
     validate(config)
     performance = config["performance"]
+    if performance.get("tts_file"):
+        from speech import load_bundle
+        tts_path = Path(performance["tts_file"])
+        if not tts_path.is_absolute():
+            tts_path = PROJECT / tts_path
+        bundle = load_bundle(tts_path)
+        if performance["text"] != bundle["text"]:
+            raise ValueError("Configured text does not match TTS bundle")
+        if bundle["duration_seconds"] > performance["frames"] / config["quality"]["fps"]:
+            raise ValueError("TTS timing exceeds the configured frame timeline")
+        if performance.get("audio_file") and Path(performance["audio_file"]).resolve() != Path(bundle["audio_file"]):
+            raise ValueError("Conflicting audio_file and TTS audio")
+        performance["tts_file"] = str(tts_path.resolve())
+        performance["tts_sha256"] = sha256(tts_path)
+        performance["audio_file"] = bundle["audio_file"]
+    elif performance.get("tts_sha256"):
+        raise ValueError("tts_sha256 requires tts_file")
     if performance.get("audio_file"):
         path = Path(performance["audio_file"])
         if not path.is_absolute():
@@ -95,7 +114,7 @@ def resolve(config):
     tools = tool_paths()
     identity = {
         "scripts": {name: sha256(PROJECT / name) for name in
-                    ("renderer.py", "render_settings.py", "tools/create_head_scene.py")},
+                    ("renderer.py", "render_settings.py", "speech.py", "tools/create_head_scene.py")},
         "tools": {name: {"path": tools[name], "size": Path(tools[name]).stat().st_size,
                          "mtime_ns": Path(tools[name]).stat().st_mtime_ns}
                   for name in ("blender", "ffmpeg", "ffprobe")},

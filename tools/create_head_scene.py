@@ -8,6 +8,8 @@ import time
 
 import bpy
 from mathutils import Vector
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from speech import MOUTH_SHAPES, load_bundle, viseme_weights
 
 
 def material(name, color, roughness=0.65):
@@ -73,7 +75,53 @@ def aim(obj, target):
     obj.rotation_euler = (Vector(target) - obj.location).to_track_quat("-Z", "Y").to_euler()
 
 
-def build_scene(width, height, frames, hair, fps=24, samples=16):
+def mouth_vertices(shape, interior=False):
+    width, opening, protrusion, _ = MOUTH_SHAPES[shape]
+    if interior:
+        points = [(0, -0.197 - protrusion, 0.213)]
+        points += [(width * math.cos(t * math.tau / 48), -0.197 - protrusion,
+                    0.213 + opening * math.sin(t * math.tau / 48)) for t in range(48)]
+        return points
+    points = []
+    for i in range(48):
+        theta = i * math.tau / 48
+        for j in range(8):
+            phi = j * math.tau / 8
+            thickness = 0.0035
+            points.append(((width + thickness * math.cos(phi)) * math.cos(theta),
+                           -0.200 - protrusion + thickness * math.sin(phi),
+                           0.213 + (opening + thickness * math.cos(phi)) * math.sin(theta)))
+    return points
+
+
+def create_mouth(head, face, lip_material, interior_material):
+    lip_faces = []
+    for i in range(48):
+        for j in range(8):
+            lip_faces.append((i * 8 + j, i * 8 + (j + 1) % 8,
+                              ((i + 1) % 48) * 8 + (j + 1) % 8, ((i + 1) % 48) * 8 + j))
+    cavity_faces = [(0, i + 1, (i + 1) % 48 + 1) for i in range(48)]
+    objects = []
+    for name, interior, faces, mat in (("MouthLips", False, lip_faces, lip_material),
+                                        ("MouthInterior", True, cavity_faces, interior_material)):
+        obj = mesh(name, mouth_vertices("REST", interior), faces, mat, head)
+        obj.shape_key_add(name="Basis")
+        for shape in MOUTH_SHAPES:
+            if shape == "REST":
+                continue
+            key = obj.shape_key_add(name=shape)
+            for vertex, coordinate in zip(key.data, mouth_vertices(shape, interior)):
+                vertex.co = coordinate
+        objects.append(obj)
+    face.shape_key_add(name="Basis")
+    jaw = face.shape_key_add(name="JawOpen")
+    for vertex in jaw.data:
+        if vertex.co.z < -0.25:
+            vertex.co.z -= 0.06 * min(1, (-vertex.co.z - 0.25) / 0.75)
+    return objects, jaw
+
+
+def build_scene(width, height, frames, hair, fps=24, samples=16, camera_mode="fixed-half-body", speech=None):
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete(use_global=False)
     skin = material("Skin_Draft", (0.56, 0.32, 0.22))
@@ -113,11 +161,8 @@ def build_scene(width, height, frames, hair, fps=24, samples=16):
     sphere("NoseTip", (0, -0.225, 0.305), (0.035, 0.035, 0.025), skin, head)
     for side in (-1, 1):
         sphere(f"Nostril_{side}", (side * 0.021, -0.246, 0.295), (0.008, 0.005, 0.004), lips, head)
-    # Small closed mouth: speech and anatomical eyelids belong to later stages.
-    mouth = [(0.055 * x / 12, -0.177 - 0.015 * (1 - (x / 12) ** 2),
-              0.213 + 0.004 * (x / 12) ** 2) for x in range(-12, 13)]
-    curve("MouthClosed", mouth, 0.003, lips, head)
-    curve("LowerLip", [(x, y + 0.002, z - 0.009) for x, y, z in mouth], 0.0045, skin, head)
+    interior = material("MouthInterior_Draft", (0.022, 0.004, 0.005))
+    mouths, jaw = create_mouth(head, face, lips, interior)
     eyes = []
     for side in (-1, 1):
         eye = empty(f"EyeAperture_{side}", (side * 0.087, -0.182, 0.405))
@@ -168,6 +213,9 @@ def build_scene(width, height, frames, hair, fps=24, samples=16):
     # Ortho scale is the horizontal extent at this aspect ratio; include the full bust.
     camera.data.ortho_scale = 3.45
     aim(camera, (0, 0, 1.49))
+    if camera_mode == "head-closeup":
+        camera.data.ortho_scale = 1.28
+        aim(camera, (0, 0, 1.99))
     scene.camera = camera
     for name, location, power, size in [
         ("Key", (-2, -3, 4), 400, 3),
@@ -181,6 +229,7 @@ def build_scene(width, height, frames, hair, fps=24, samples=16):
         obj.location = location
         aim(obj, (0, 0, 1.7))
     # A closed periodic sequence: blink around frames 23 and 53; subtle turn and breath.
+    mouth_timeline = []
     for frame in range(1, frames + 1):
         phase = (frame - 1) / max(1, frames - 1) * 2 * math.pi
         head.rotation_euler = (math.radians(1.2) * math.sin(phase * 2), 0,
@@ -193,8 +242,18 @@ def build_scene(width, height, frames, hair, fps=24, samples=16):
         for eye in eyes:
             eye.scale.z = 1 - blink * 0.96
             eye.keyframe_insert("scale", frame=frame)
+        time_seconds = (frame - 1) / fps
+        weights = viseme_weights(time_seconds, speech["events"]) if speech else {v: 0 for v in MOUTH_SHAPES if v != "REST"}
+        for obj in mouths:
+            for name, weight in weights.items():
+                key = obj.data.shape_keys.key_blocks[name]
+                key.value = weight
+                key.keyframe_insert("value", frame=frame)
+        jaw.value = sum(weights[name] * MOUTH_SHAPES[name][3] for name in weights)
+        jaw.keyframe_insert("value", frame=frame)
+        mouth_timeline.append({"frame": frame, "time": time_seconds, "weights": weights, "jaw": jaw.value})
     scene["asset_revision"] = "procedural-head-v1"
-    scene["scope"] = "Technical mannequin, simplified eye-aperture blink; not photoreal / not speech"
+    scene["scope"] = "Technical mannequin; simplified eye aperture and mouth Shape Keys; not photoreal"
     scene["axes"] = "Z up; front -Y; units meters"
     scene.frame_set(1)
     # Open directly in the camera view using a low-cost solid viewport.
@@ -204,7 +263,7 @@ def build_scene(width, height, frames, hair, fps=24, samples=16):
                 area.spaces.active.region_3d.view_perspective = "CAMERA"
                 area.spaces.active.shading.type = "SOLID"
                 area.spaces.active.shading.color_type = "MATERIAL"
-    return scene
+    return scene, mouth_timeline
 
 
 parser = argparse.ArgumentParser()
@@ -216,12 +275,22 @@ parser.add_argument("--fps", type=int, default=24)
 parser.add_argument("--samples", type=int, default=16)
 parser.add_argument("--hair", choices=["none", "static"], default="static")
 parser.add_argument("--render", choices=["still", "animation", "none"], default="still")
+parser.add_argument("--camera", choices=["fixed-half-body", "head-closeup"], default="fixed-half-body")
+parser.add_argument("--tts-file")
+parser.add_argument("--still-frame", type=int, default=1)
 args = parser.parse_args(sys.argv[sys.argv.index("--") + 1:])
 if args.width <= 0 or args.height <= 0 or args.frames < 2 or args.fps < 1 or args.samples < 1:
     raise ValueError("Positive dimensions and at least two frames are required")
 output = Path(args.output).resolve()
 output.mkdir(parents=True, exist_ok=True)
-scene = build_scene(args.width, args.height, args.frames, args.hair, args.fps, args.samples)
+speech = load_bundle(args.tts_file) if args.tts_file else None
+if speech and speech["duration_seconds"] > args.frames / args.fps:
+    raise ValueError("Speech exceeds scene timeline")
+scene, mouth_timeline = build_scene(args.width, args.height, args.frames, args.hair, args.fps, args.samples, args.camera, speech)
+if args.render == "still":
+    if not 1 <= args.still_frame <= args.frames:
+        raise ValueError("still-frame outside scene timeline")
+    scene.frame_set(args.still_frame)
 scene.render.filepath = str(output / ("frame_" if args.render == "animation" else "preview.png"))
 assert scene.camera and bpy.data.objects.get("HeadControl") and bpy.data.objects.get("Head")
 assert len(bpy.data.objects["Head"].data.vertices) < 10000
@@ -239,6 +308,8 @@ report = {
     "vertices": sum(len(o.data.vertices) for o in scene.objects if o.type == "MESH"),
     "render_mode": args.render, "render_seconds": round(time.perf_counter() - started, 3),
     "scope": scene["scope"],
+    "speech_source": speech.get("source") if speech else None,
+    "mouth_shapes": list(MOUTH_SHAPES), "camera": args.camera,
 }
 if args.render == "animation":
     files = list(output.glob("frame_*.png"))
@@ -246,3 +317,4 @@ if args.render == "animation":
         raise RuntimeError(f"Expected {args.frames} rendered frames, got {len(files)}")
     report["frames_written"] = len(files)
 (output / "scene-report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+(output / "mouth-timeline.json").write_text(json.dumps(mouth_timeline, indent=2), encoding="utf-8")

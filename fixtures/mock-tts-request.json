@@ -1,0 +1,13 @@
+{
+  "text": "爸、妈，啊、诶、衣、哦、乌、飞。",
+  "segments": [
+    {"text": "爸", "visemes": ["MBP", "A"]},
+    {"text": "妈", "visemes": ["MBP", "A"]},
+    {"text": "啊", "visemes": ["A"]},
+    {"text": "诶", "visemes": ["E"]},
+    {"text": "衣", "visemes": ["I"]},
+    {"text": "哦", "visemes": ["O"]},
+    {"text": "乌", "visemes": ["U"]},
+    {"text": "飞", "visemes": ["FV", "E", "I"]}
+  ]
+}
