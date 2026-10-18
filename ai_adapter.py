@@ -39,7 +39,12 @@ def parse_reply(raw):
     try:
         result = json.loads(content)
     except json.JSONDecodeError:
-        raise ValueError('DeepSeek 回复正文不是有效 JSON；可修改问题后手动重试；未自动重试') from None
+        # In normal text mode a valid conversational answer need not contain
+        # behavior JSON. Use fixed local intents, never interpret it as commands.
+        if content.startswith(('{', '[', '```')):
+            raise ValueError('DeepSeek 回复正文不是有效 JSON；可修改问题后手动重试；未自动重试') from None
+        result = dict(text=content, expression='neutral-with-blink', motion='idle-v1',
+                      behavior_source='local-default-for-plain-text')
     validate_response(result)
     result.update(usage=data.get('usage'), source='deepseek', returned_model=data.get('model'))
     return result
@@ -62,7 +67,7 @@ def chat(prompt, root, provider='mock', model=None, context=None, revision=None)
         messages.append(dict(item))
     messages.append({'role': 'user', 'content': prompt})
     identity = dict(provider=provider, model=model if provider == 'deepseek' else 'fixed-test-v1', revision=revision,
-                    messages=messages, temperature=0.2, max_tokens=256, format='json_object', thinking='disabled', adapter='v1')
+                    messages=messages, temperature=0.2, max_tokens=1024, format='text', thinking='disabled', adapter='v2')
     def produce(folder):
         if provider == 'mock':
             result = dict(text='你好，我正在测试数字人的表情、嘴型和动作。', expression='smile', motion='explain', usage=None, source='mock-not-ai')
@@ -72,8 +77,10 @@ def chat(prompt, root, provider='mock', model=None, context=None, revision=None)
                 raise ValueError('缺少 DEEPSEEK_API_KEY，请在桌面控制台设置会话密钥')
             if len(secret)>1024 or any(not 33<=ord(c)<=126 for c in secret):
                 raise ValueError('密钥格式无效，请勿包含空白、换行或非 ASCII 字符')
-            body = dict(model=model, messages=messages, temperature=0.2, max_tokens=256, stream=False,
-                        response_format={'type': 'json_object'}, thinking={'type':'disabled'})
+            # JSON mode can return an empty completion. Request normal text with
+            # the explicit JSON prompt instead; still strictly validate the result.
+            body = dict(model=model, messages=messages, temperature=0.2, max_tokens=1024, stream=False,
+                        response_format={'type': 'text'}, thinking={'type':'disabled'})
             req = Request('https://api.deepseek.com/chat/completions', data=json.dumps(body).encode(),
                           headers={'Authorization': 'Bearer '+secret, 'Content-Type': 'application/json'})
             try:

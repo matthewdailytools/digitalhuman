@@ -143,7 +143,7 @@ python cache_pipeline.py play
 
 DeepSeek 采用官方 `https://api.deepseek.com/chat/completions`，模型输入框可修改；当前默认 `deepseek-flash`，具体以账号支持的模型为准。桌面密码框输入密钥后点击“设置会话密钥”，只保留在当前进程环境；也可在启动控制台前设置 `DEEPSEEK_API_KEY` 和可选 `DEEPSEEK_MODEL`。不要把密钥写入项目文件或发送到聊天。已缓存的对话可无密钥读取；首次外部请求必须有有效密钥。接口依据：[DeepSeek 官方调用示例](https://api-docs.deepseek.com/api_samples/chat_curl/)。
 
-短回复请求显式使用非思考模式和 JSON 对象输出，按受支持的表情 / 动作枚举校验，不执行模型生成的代码或命令。依据：[DeepSeek 官方参数说明](https://api-docs.deepseek.com/api/create-chat-completion/)。任务输出分别保存于自己的工作目录，桌面只消费对应任务的结果，避免旧任务覆盖后抢播。
+短回复请求显式使用非思考模式、1024 token 输出上限及普通文本模式，通过提示词要求 JSON，避免 JSON 模式偶发空正文。结构化回复按受支持的表情 / 动作枚举校验；纯文本回答使用本地固定的 neutral-with-blink / idle-v1，并标记行为来源。空回复、截断、损坏 JSON 仍明确报错，不执行模型生成的代码或命令，不自动重试计费请求。依据：[DeepSeek 官方参数说明](https://api-docs.deepseek.com/api/create-chat-completion/)、[JSON 模式空回复说明](https://api-docs.deepseek.com/guides/json_mode/)。任务输出分别保存于自己的工作目录，桌面只消费对应任务的结果，避免旧任务覆盖后抢播。
 
 语音暂用 Windows SAPI，任意台词嘴型按音量窗口与测试元音序列近似，**不是中文音素对齐**；第五步的音节夹具仍可单独使用。DeepSeek 适配器只负责文本及行为意图。外部 TTS / 对齐与麦克风 ASR 尚待选择服务并实接，不能把本地替代测试标为外部 API 已验收。
 
@@ -153,7 +153,7 @@ DeepSeek 采用官方 `https://api.deepseek.com/chat/completions`，模型输入
 
 ## 接下来需要接入
 
-1. 真实 DeepSeek 调用验收，以及外部 ASR / TTS / 对齐服务，记录模型和声音版本。模型别名升级后可通过启动环境中的 `DEEPSEEK_MODEL_REVISION` 更换对话缓存版本。
+1. 外部 ASR / TTS / 对齐服务实接，记录模型和声音版本。真实 DeepSeek 对话已通过桌面按钮完成回复、SAPI 语音、160 帧视频生成与自动播放，并验证手动缓存重播和无密钥全层缓存复用；本机记录见 `work/acceptance/deepseek-live-desktop-validation.json`。模型别名升级后可通过启动环境中的 `DEEPSEEK_MODEL_REVISION` 更换对话缓存版本。
 2. Unreal 高质量离线后端及更多角色、表情与材质选项。
 3. 待机、倾听、回答片段播放器及过渡、取消机制。
 4. 中文口型同步及实际画质验收；现有编码与解码检查继续保留。

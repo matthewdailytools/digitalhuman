@@ -126,7 +126,7 @@ class DeepSeekTests(unittest.TestCase):
         cases=[('<html>secret</html>','接口响应不是有效 JSON'),
                ('[]','接口响应结构无效'), ('{}','缺少有效 choices')]
         for content,reason in (('', '空回复'), (None,'空回复'), ([], 'content 类型无效'),
-                               ('hello secret','正文不是有效 JSON')):
+                               ('{"text": "secret"','正文不是有效 JSON')):
             cases.append((json.dumps({'choices':[{'finish_reason':'stop','message':{'content':content}}]}),reason))
         cases.append((json.dumps({'choices':[{'finish_reason':'length','message':{'content':'partial'}}]}),'未完整结束'))
         for raw,reason in cases:
@@ -138,6 +138,14 @@ class DeepSeekTests(unittest.TestCase):
         content='```json\n'+json.dumps({'text':'你好','expression':'execute','motion':'nod'})+'\n```'
         with self.assertRaisesRegex(ValueError,'行为意图无效'):
             parse_reply(json.dumps({'choices':[{'finish_reason':'stop','message':{'content':content}}]}))
+
+    def test_plain_answer_uses_fixed_local_behavior(self):
+        content='我是数字人助手，没有性别，可以按你的需要设定声音和形象。'
+        result=parse_reply(json.dumps({'choices':[{'finish_reason':'stop','message':{'content':content}}]}))
+        self.assertEqual(result['text'],content)
+        self.assertEqual(result['expression'],'neutral-with-blink')
+        self.assertEqual(result['motion'],'idle-v1')
+        self.assertEqual(result['behavior_source'],'local-default-for-plain-text')
 
     def test_missing_key_fails_without_network(self):
         with tempfile.TemporaryDirectory() as folder,patch.dict('os.environ',{'DEEPSEEK_API_KEY':''}),patch('ai_adapter.build_opener') as call:
@@ -158,7 +166,8 @@ class DeepSeekTests(unittest.TestCase):
             self.assertTrue(chat('hi',folder,'deepseek')[1]);self.assertEqual(opener.open.call_count,1)
             request=json.loads(opener.open.call_args.args[0].data)
             self.assertEqual(request['thinking'],{'type':'disabled'})
-            self.assertEqual(request['response_format'],{'type':'json_object'})
+            self.assertEqual(request['response_format'],{'type':'text'})
+            self.assertEqual(request['max_tokens'],1024)
             for p in Path(folder).rglob('*.json'):self.assertNotIn('SECRET-TEST',p.read_text('utf-8'))
     def test_http_errors_not_retried_or_leaked(self):
         for code in (401,402,429,500):
