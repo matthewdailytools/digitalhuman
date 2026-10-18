@@ -5,7 +5,44 @@ from urllib.request import Request, build_opener, HTTPRedirectHandler
 from urllib.error import HTTPError, URLError
 from layer_cache import cached_layer
 
-SYSTEM = '你是数字人助手。用简短中文回答，最多60个汉字。只返回JSON对象，包含text、expression(neutral-with-blink/smile/curious/surprised)、motion(idle-v1/nod/shake/explain)。'
+SYSTEM = ('你是数字人助手。用简短中文回答，最多60个汉字。只返回一个JSON对象，不要代码块或解释。'
+          'text为回答正文；expression只能是neutral-with-blink、smile、curious、surprised之一；'
+          'motion只能是idle-v1、nod、shake、explain之一。'
+          'JSON示例：{"text":"你好，很高兴见到你。","expression":"smile","motion":"nod"}')
+
+
+def parse_reply(raw):
+    """Distinguish transport/schema failures from model JSON failures without echoing secrets."""
+    try:
+        data = json.loads(raw)
+    except (ValueError, UnicodeError, TypeError):
+        raise ValueError('DeepSeek 接口响应不是有效 JSON；请检查网络或代理；未自动重试') from None
+    if not isinstance(data, dict):
+        raise ValueError('DeepSeek 接口响应结构无效：应为 JSON 对象；未自动重试')
+    choices = data.get('choices')
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        raise ValueError('DeepSeek 接口响应缺少有效 choices；未自动重试')
+    choice = choices[0]
+    if choice.get('finish_reason') != 'stop':
+        raise ValueError('DeepSeek 回复未完整结束（可能达到输出上限）；未自动重试')
+    message = choice.get('message')
+    content = message.get('content') if isinstance(message, dict) else None
+    if content is None or isinstance(content, str) and not content.strip():
+        raise ValueError('DeepSeek 返回空回复；可修改问题后手动重试；未自动重试')
+    if not isinstance(content, str):
+        raise ValueError('DeepSeek 回复 content 类型无效；未自动重试')
+    content = content.strip().lstrip('\ufeff').strip()
+    # Accept only a whole JSON code fence, never arbitrary surrounding prose.
+    lines = content.splitlines()
+    if len(lines) >= 3 and lines[0].lower() in ('```json', '```') and lines[-1] == '```':
+        content = '\n'.join(lines[1:-1]).strip()
+    try:
+        result = json.loads(content)
+    except json.JSONDecodeError:
+        raise ValueError('DeepSeek 回复正文不是有效 JSON；可修改问题后手动重试；未自动重试') from None
+    validate_response(result)
+    result.update(usage=data.get('usage'), source='deepseek', returned_model=data.get('model'))
+    return result
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -44,20 +81,12 @@ def chat(prompt, root, provider='mock', model=None, context=None, revision=None)
                     raw = response.read(1_000_001)
                     if len(raw) > 1_000_000:
                         raise ValueError('API response too large')
-                    data = json.loads(raw)
-                choice = data['choices'][0]
-                if choice.get('finish_reason') != 'stop':
-                    raise ValueError('DeepSeek 回复未完整结束')
-                result = json.loads(choice['message']['content'])
-                validate_response(result)
-                result.update(usage=data.get('usage'), source='deepseek', returned_model=data.get('model'))
+                result = parse_reply(raw)
             except HTTPError as error:
                 labels = {401:'密钥无效',402:'余额不足',429:'请求限流',400:'参数或模型不受支持'}
                 raise ValueError(f'DeepSeek HTTP {error.code}: {labels.get(error.code, "服务请求失败")}；未自动重试') from None
             except (URLError, TimeoutError, OSError):
                 raise ValueError('DeepSeek 网络失败或超时；为避免重复计费未自动重试') from None
-            except (KeyError, IndexError, TypeError, UnicodeError, json.JSONDecodeError):
-                raise ValueError('DeepSeek 返回格式无效') from None
         validate_response(result)
         (folder/'response.json').write_text(json.dumps(result, ensure_ascii=False), 'utf-8')
     folder, hit = cached_layer(root, identity, produce)

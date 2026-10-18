@@ -9,7 +9,7 @@ from behavior import channels, EXPRESSIONS, MOTIONS
 from quality_profiles import apply_profile
 from layer_cache import cached_layer, key_lock
 from playback import ResponseGate, state_config
-from ai_adapter import chat
+from ai_adapter import chat, parse_reply
 from cache_admin import clean_previous
 from cache_pipeline import publish,lookup
 
@@ -116,6 +116,29 @@ class LayerTests(unittest.TestCase):
 
 
 class DeepSeekTests(unittest.TestCase):
+    def test_json_fence_and_bom_are_accepted(self):
+        reply={'text':'你好','expression':'smile','motion':'nod'}
+        for content in (json.dumps(reply), '\ufeff'+json.dumps(reply), '```json\n'+json.dumps(reply)+'\n```'):
+            payload={'choices':[{'finish_reason':'stop','message':{'content':content}}]}
+            self.assertEqual(parse_reply(json.dumps(payload))['text'],'你好')
+
+    def test_response_failure_categories_are_specific(self):
+        cases=[('<html>secret</html>','接口响应不是有效 JSON'),
+               ('[]','接口响应结构无效'), ('{}','缺少有效 choices')]
+        for content,reason in (('', '空回复'), (None,'空回复'), ([], 'content 类型无效'),
+                               ('hello secret','正文不是有效 JSON')):
+            cases.append((json.dumps({'choices':[{'finish_reason':'stop','message':{'content':content}}]}),reason))
+        cases.append((json.dumps({'choices':[{'finish_reason':'length','message':{'content':'partial'}}]}),'未完整结束'))
+        for raw,reason in cases:
+            with self.subTest(reason=reason),self.assertRaisesRegex(ValueError,reason) as error:
+                parse_reply(raw)
+            self.assertNotIn('secret',str(error.exception))
+
+    def test_fenced_json_still_enforces_behavior_allowlist(self):
+        content='```json\n'+json.dumps({'text':'你好','expression':'execute','motion':'nod'})+'\n```'
+        with self.assertRaisesRegex(ValueError,'行为意图无效'):
+            parse_reply(json.dumps({'choices':[{'finish_reason':'stop','message':{'content':content}}]}))
+
     def test_missing_key_fails_without_network(self):
         with tempfile.TemporaryDirectory() as folder,patch.dict('os.environ',{'DEEPSEEK_API_KEY':''}),patch('ai_adapter.build_opener') as call:
             with self.assertRaises(ValueError):chat('hi',folder,'deepseek')
