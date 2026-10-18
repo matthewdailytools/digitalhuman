@@ -1,3 +1,8 @@
 .cache/
 __pycache__/
 *.pyc
+.venv/
+.env
+work/
+renders/
+local-tools.json
