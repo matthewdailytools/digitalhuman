@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "character": {"id": "first-human", "revision": "v1"},
+  "scene": {"revision": "v1", "camera": "front-half-body", "lighting": "studio"},
+  "quality": {
+    "profile": "draft",
+    "width": 1280,
+    "height": 720,
+    "fps": 24,
+    "hair": "cards-static",
+    "skin": "simple",
+    "body": "half-body"
+  },
+  "performance": {
+    "text": "你好，这是数字人缓存原型。",
+    "language": "zh-CN",
+    "voice_revision": "unset",
+    "expression": "neutral",
+    "motion_revision": "idle-v1",
+    "seed": 42
+  },
+  "generator": {"id": "external-render", "revision": "unset"}
+}
