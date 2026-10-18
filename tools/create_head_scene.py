@@ -10,6 +10,7 @@ import bpy
 from mathutils import Vector
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from speech import MOUTH_SHAPES, load_bundle, viseme_weights
+from behavior import channels, EXPRESSIONS, MOTIONS, GAZES
 
 
 def material(name, color, roughness=0.65):
@@ -121,10 +122,19 @@ def create_mouth(head, face, lip_material, interior_material):
     return objects, jaw
 
 
-def build_scene(width, height, frames, hair, fps=24, samples=16, camera_mode="fixed-half-body", speech=None):
+def build_scene(width, height, frames, hair, fps=24, samples=16, camera_mode="fixed-half-body", speech=None, expression="neutral-with-blink", motion="idle-v1", strength=0.6, gaze="camera", enter=0.25, leave=0.25, skin_mode="simple"):
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete(use_global=False)
     skin = material("Skin_Draft", (0.56, 0.32, 0.22))
+    if skin_mode == "procedural":
+        nodes = skin.node_tree.nodes
+        noise = nodes.new('ShaderNodeTexNoise')
+        noise.inputs['Scale'].default_value = 95
+        bump = nodes.new('ShaderNodeBump')
+        bump.inputs['Strength'].default_value = 0.12
+        bump.inputs['Distance'].default_value = 0.002
+        skin.node_tree.links.new(noise.outputs['Fac'], bump.inputs['Height'])
+        skin.node_tree.links.new(bump.outputs['Normal'], nodes.get('Principled BSDF').inputs['Normal'])
     lips = material("Lip_Draft", (0.27, 0.095, 0.075))
     dark = material("Hair_Draft", (0.035, 0.025, 0.021))
     white = material("Sclera_Draft", (0.82, 0.84, 0.81), 0.35)
@@ -163,18 +173,30 @@ def build_scene(width, height, frames, hair, fps=24, samples=16, camera_mode="fi
         sphere(f"Nostril_{side}", (side * 0.021, -0.246, 0.295), (0.008, 0.005, 0.004), lips, head)
     interior = material("MouthInterior_Draft", (0.022, 0.004, 0.005))
     mouths, jaw = create_mouth(head, face, lips, interior)
+    # Emotion shapes only lift corners; speech aperture remains a separate channel.
+    for obj in mouths:
+        key = obj.shape_key_add(name="Smile")
+        for vertex in key.data:
+            vertex.co.z += 0.012 * (abs(vertex.co.x) / 0.075) ** 2
+    arm = empty("GestureControl", (0.34, 0, 1.32))
+    arm.parent = body
+    sphere("GestureSleeve", (0.07, 0, -0.16), (0.075, 0.09, 0.22), shirt, arm)
+    sphere("GestureHand", (0.10, -0.01, -0.37), (0.055, 0.045, 0.075), skin, arm)
     eyes = []
+    brows, irises = [], []
     for side in (-1, 1):
         eye = empty(f"EyeAperture_{side}", (side * 0.087, -0.182, 0.405))
         eye.parent = head
         eyes.append(eye)
         sphere(f"EyeWhite_{side}", (0, 0, 0), (0.052, 0.029, 0.024), white, eye)
-        sphere(f"Iris_{side}", (0, -0.028, 0), (0.016, 0.0035, 0.016), iris, eye)
-        sphere(f"Pupil_{side}", (0, -0.031, 0), (0.007, 0.0015, 0.007), pupil, eye)
+        irises.append(sphere(f"Iris_{side}", (0, -0.028, 0), (0.016, 0.0035, 0.016), iris, eye))
+        irises.append(sphere(f"Pupil_{side}", (0, -0.031, 0), (0.007, 0.0015, 0.007), pupil, eye))
         eyebrow = [(side * 0.087 + 0.052 * x / 10, -0.183,
                     0.452 + 0.009 * (1 - (x / 10) ** 2)) for x in range(-10, 11)]
-        curve(f"Eyebrow_{side}", eyebrow, 0.0045, dark, head)
-    if hair == "static":
+        brows.append(curve(f"Eyebrow_{side}", eyebrow, 0.0045, dark, head))
+    hair_control = empty("HairControl", (0, 0, 0))
+    hair_control.parent = head
+    if hair in ("static", "sway"):
         vertices, faces = [], []
         rings, segments = 14, 48
         for i in range(rings + 1):
@@ -191,7 +213,7 @@ def build_scene(width, height, frames, hair, fps=24, samples=16, camera_mode="fi
                 a = i * segments + j
                 b = i * segments + (j + 1) % segments
                 faces.append((a, b, b + segments, a + segments))
-        mesh("Hair_StaticCap", vertices, faces, dark, head)
+        mesh("Hair_StaticCap", vertices, faces, dark, hair_control)
     scene = bpy.context.scene
     scene.render.engine = "BLENDER_EEVEE_NEXT"
     scene.eevee.taa_render_samples = samples
@@ -231,27 +253,42 @@ def build_scene(width, height, frames, hair, fps=24, samples=16, camera_mode="fi
     # A closed periodic sequence: blink around frames 23 and 53; subtle turn and breath.
     mouth_timeline = []
     for frame in range(1, frames + 1):
-        phase = (frame - 1) / max(1, frames - 1) * 2 * math.pi
-        head.rotation_euler = (math.radians(1.2) * math.sin(phase * 2), 0,
-                               math.radians(7) * math.sin(phase))
+        time_seconds = (frame - 1) / fps
+        duration = (frames - 1) / fps
+        controls = channels(time_seconds, duration, expression, strength, motion, gaze, enter, leave)
+        head.rotation_euler = (controls['pitch'], 0, controls['turn'])
         head.keyframe_insert("rotation_euler", frame=frame)
-        body.location.z = 0.003 * (1 - math.cos(phase))
+        body.location.z = controls['breath']
         body.keyframe_insert("location", frame=frame)
-        blink = max(max(0, 1 - abs(frame - center) / max(1, fps / 8))
-                    for center in (round(23 * fps / 24), round(53 * fps / 24)))
+        arm.rotation_euler.x = -controls['arm']
+        arm.keyframe_insert("rotation_euler", frame=frame)
+        hair_control.rotation_euler.z = controls['hair'] if hair == 'sway' else 0
+        hair_control.keyframe_insert("rotation_euler", frame=frame)
+        for obj in irises:
+            obj.location.x = controls['gaze']
+            obj.keyframe_insert("location", frame=frame)
+        for index, brow in enumerate(brows):
+            brow.location.z = 0.018*controls['brow']
+            brow.rotation_euler.y = (1 if index else -1)*0.15*controls['brow']
+            brow.keyframe_insert("location", frame=frame)
+            brow.keyframe_insert("rotation_euler", frame=frame)
         for eye in eyes:
-            eye.scale.z = 1 - blink * 0.96
+            eye.scale.z = (1 + 0.25*controls['surprise'])*(1-controls['blink']*0.96)
             eye.keyframe_insert("scale", frame=frame)
         time_seconds = (frame - 1) / fps
         weights = viseme_weights(time_seconds, speech["events"]) if speech else {v: 0 for v in MOUTH_SHAPES if v != "REST"}
         for obj in mouths:
+            smile = obj.data.shape_keys.key_blocks['Smile']
+            # Reduce corner lifting during large openings and rounded/closed phonemes.
+            smile.value = controls['smile']*(1-0.8*max(weights.get(n, 0) for n in ('MBP', 'O', 'U', 'A')))
+            smile.keyframe_insert('value', frame=frame)
             for name, weight in weights.items():
                 key = obj.data.shape_keys.key_blocks[name]
                 key.value = weight
                 key.keyframe_insert("value", frame=frame)
         jaw.value = sum(weights[name] * MOUTH_SHAPES[name][3] for name in weights)
         jaw.keyframe_insert("value", frame=frame)
-        mouth_timeline.append({"frame": frame, "time": time_seconds, "weights": weights, "jaw": jaw.value})
+        mouth_timeline.append({"frame": frame, "time": time_seconds, "weights": weights, "jaw": jaw.value, "controls": controls})
     scene["asset_revision"] = "procedural-head-v1"
     scene["scope"] = "Technical mannequin; simplified eye aperture and mouth Shape Keys; not photoreal"
     scene["axes"] = "Z up; front -Y; units meters"
@@ -273,10 +310,17 @@ parser.add_argument("--height", type=int, default=720)
 parser.add_argument("--frames", type=int, default=72)
 parser.add_argument("--fps", type=int, default=24)
 parser.add_argument("--samples", type=int, default=16)
-parser.add_argument("--hair", choices=["none", "static"], default="static")
+parser.add_argument("--hair", choices=["none", "static", "sway"], default="static")
 parser.add_argument("--render", choices=["still", "animation", "none"], default="still")
 parser.add_argument("--camera", choices=["fixed-half-body", "head-closeup"], default="fixed-half-body")
 parser.add_argument("--tts-file")
+parser.add_argument("--expression", choices=EXPRESSIONS, default="neutral-with-blink")
+parser.add_argument("--motion", choices=MOTIONS, default="idle-v1")
+parser.add_argument("--gaze", choices=GAZES, default="camera")
+parser.add_argument("--strength", type=float, default=0.6)
+parser.add_argument("--enter", type=float, default=0.25)
+parser.add_argument("--leave", type=float, default=0.25)
+parser.add_argument("--skin", choices=['simple', 'procedural'], default='simple')
 parser.add_argument("--still-frame", type=int, default=1)
 args = parser.parse_args(sys.argv[sys.argv.index("--") + 1:])
 if args.width <= 0 or args.height <= 0 or args.frames < 2 or args.fps < 1 or args.samples < 1:
@@ -286,7 +330,7 @@ output.mkdir(parents=True, exist_ok=True)
 speech = load_bundle(args.tts_file) if args.tts_file else None
 if speech and speech["duration_seconds"] > args.frames / args.fps:
     raise ValueError("Speech exceeds scene timeline")
-scene, mouth_timeline = build_scene(args.width, args.height, args.frames, args.hair, args.fps, args.samples, args.camera, speech)
+scene, mouth_timeline = build_scene(args.width, args.height, args.frames, args.hair, args.fps, args.samples, args.camera, speech, args.expression, args.motion, args.strength, args.gaze, args.enter, args.leave, args.skin)
 if args.render == "still":
     if not 1 <= args.still_frame <= args.frames:
         raise ValueError("still-frame outside scene timeline")
@@ -304,7 +348,7 @@ report = {
     "blender": bpy.app.version_string, "revision": scene["asset_revision"],
     "engine": scene.render.engine, "samples": scene.eevee.taa_render_samples,
     "width": args.width, "height": args.height, "fps": args.fps, "frames": args.frames,
-    "hair": args.hair, "objects": len(scene.objects),
+    "expression": args.expression, "motion": args.motion, "skin": args.skin, "hair": args.hair, "objects": len(scene.objects),
     "vertices": sum(len(o.data.vertices) for o in scene.objects if o.type == "MESH"),
     "render_mode": args.render, "render_seconds": round(time.perf_counter() - started, 3),
     "scope": scene["scope"],

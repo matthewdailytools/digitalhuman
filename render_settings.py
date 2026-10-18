@@ -37,7 +37,7 @@ def validate(config):
         "schema_version": None, "character": set(expected["character"]),
         "scene": set(expected["scene"]) | {"camera"},
         "quality": {"profile", "width", "height", "fps", "samples", "hair", "skin", "body"},
-        "performance": {"text", "expression", "motion_revision", "frames", "audio_file", "audio_sha256", "tts_file", "tts_sha256"},
+        "performance": {"text", "expression", "motion_revision", "frames", "audio_file", "audio_sha256", "tts_file", "tts_sha256", "strength", "enter", "leave", "gaze"},
         "generator": {"id", "revision", "resolved_signature"},
     }
     unknown = set(config) - set(allowed)
@@ -65,17 +65,25 @@ def validate(config):
             raise ValueError(f"quality.{name} must be an integer from {lo} to {hi}")
     if quality["width"] % 2 or quality["height"] % 2:
         raise ValueError("H.264 dimensions must be even")
-    if quality.get("profile") != "draft" or quality.get("skin") != "simple" or quality.get("body") != "bust":
-        raise ValueError("Only draft profile, simple skin and bust body are implemented")
-    if quality.get("hair") not in ("none", "static"):
+    if quality.get("profile") not in ("draft", "preview") or quality.get("skin") not in ("simple", "procedural") or quality.get("body") != "bust":
+        raise ValueError("Only draft/preview profiles, simple/procedural skin and bust body are implemented")
+    if quality.get("hair") not in ("none", "static", "sway"):
         raise ValueError("hair must be none or static")
     frames = performance.get("frames")
     if type(frames) is not int or not 2 <= frames <= quality["fps"] * 30:
         raise ValueError("frames must describe 2 frames to 30 seconds")
     if not isinstance(performance.get("text"), str) or (performance["text"] and not performance.get("tts_file")):
         raise ValueError("Nonempty text requires a TTS timing bundle")
-    if performance.get("expression") != "neutral-with-blink" or performance.get("motion_revision") != "idle-v1":
-        raise ValueError("Only neutral-with-blink expression and idle-v1 motion are implemented")
+    from behavior import EXPRESSIONS, MOTIONS, GAZES
+    from speech import number
+    if performance.get("expression") not in EXPRESSIONS or performance.get("motion_revision") not in MOTIONS:
+        raise ValueError("Unsupported expression or motion")
+    if performance.get("gaze", "camera") not in GAZES:
+        raise ValueError("Unsupported gaze")
+    for name, default, maximum in (("strength", 0.6, 1), ("enter", 0.25, 5), ("leave", 0.25, 5)):
+        value = performance.get(name, default)
+        if not number(value) or not 0 <= value <= maximum:
+            raise ValueError(f"Invalid performance.{name}")
     if config["generator"].get("id") != GENERATOR_ID or config["generator"].get("revision") != "v1":
         raise ValueError("Unsupported renderer identity")
 
@@ -114,7 +122,7 @@ def resolve(config):
     tools = tool_paths()
     identity = {
         "scripts": {name: sha256(PROJECT / name) for name in
-                    ("renderer.py", "render_settings.py", "speech.py", "tools/create_head_scene.py")},
+                    ("renderer.py", "render_settings.py", "speech.py", "behavior.py", "tools/create_head_scene.py")},
         "tools": {name: {"path": tools[name], "size": Path(tools[name]).stat().st_size,
                          "mtime_ns": Path(tools[name]).stat().st_mtime_ns}
                   for name in ("blender", "ffmpeg", "ffprobe")},

@@ -12,6 +12,9 @@ from tkinter import ttk, messagebox
 from cache_pipeline import cache_key
 from desktop_controller import Jobs, presets, selection, cache_status, WORK, PROJECT
 from render_settings import tool_paths
+from playback import ResponseGate
+from quality_profiles import PROFILES
+from behavior import EXPRESSIONS, MOTIONS, GAZES
 
 
 class Player:
@@ -46,7 +49,7 @@ class Player:
 
 def preview_png(media):
     command = [tool_paths()["ffmpeg"], "-v", "error", "-i", str(media), "-frames:v", "1", "-vf",
-               "scale=680:280:force_original_aspect_ratio=decrease,pad=680:280:(ow-iw)/2:(oh-ih)/2:color=0x18201e",
+               "scale=680:200:force_original_aspect_ratio=decrease,pad=680:200:(ow-iw)/2:(oh-ih)/2:color=0x18201e",
                "-f", "image2pipe", "-vcodec", "png", "pipe:1"]
     return subprocess.run(command, capture_output=True, check=True, timeout=30,
                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
@@ -61,6 +64,11 @@ class Console:
         self.request_id = 0
         self.summary = None
         self.last_job = None
+        self.gate = ResponseGate()
+        self.reel_token = None
+        self.reel_media = None
+        self.context = []
+        self.waiting_player = False
         self.busy = False
         self.suppress = False
         self.image = None
@@ -83,17 +91,23 @@ class Console:
         title = ttk.Frame(page)
         title.pack(fill="x", pady=(5, 12))
         ttk.Label(title, text="数字人测试控制台", font=("Microsoft YaHei UI", 18, "bold")).pack(side="left")
-        ttk.Label(title, text="原生桌面 · 无网页服务 · 外部 API 未连接").pack(side="right")
+        ttk.Label(title, text="桌面版 · DeepSeek 对话 · 本地测试语音").pack(side="right")
         main = ttk.Frame(page)
         main.pack(fill="both", expand=True)
         main.columnconfigure(1, weight=1)
         main.rowconfigure(0, weight=1)
-        left = ttk.Frame(main, padding=(0, 0, 22, 0))
-        left.grid(row=0, column=0, sticky="nsw")
+        tabs = ttk.Notebook(main, width=280)
+        tabs.grid(row=0, column=0, sticky="nsw", padx=(0, 18))
+        left = ttk.Frame(tabs, padding=8)
+        advanced = ttk.Frame(tabs, padding=8)
+        ai = ttk.Frame(tabs, padding=8)
+        tabs.add(left, text="渲染")
+        tabs.add(advanced, text="表情 / 动作")
+        tabs.add(ai, text="AI / 验收")
         right = ttk.Frame(main)
         right.grid(row=0, column=1, sticky="nsew")
         self.widgets = []
-        self.variables = {name: tk.StringVar(root) for name in ("preset", "resolution", "fps", "samples", "frames", "hair", "camera")}
+        self.variables = {name: tk.StringVar(root) for name in ("preset", "resolution", "fps", "samples", "frames", "hair", "camera", "profile", "expression", "motion", "strength", "gaze", "enter", "leave")}
         self.values = {}
 
         def field(label, key, values=None, parent=None, width=29):
@@ -113,7 +127,7 @@ class Console:
         self.text_label.pack(anchor="w", pady=10)
         field("分辨率", "resolution", ["640 × 360", "960 × 540", "1280 × 720"])
         for pair in ((('帧率', 'fps', ['24', '30']), ('采样数', 'samples', ['4', '8', '16', '32'])),
-                     (('动画帧数', 'frames', None), ('头发', 'hair', ['静态头发', '关闭头发']))):
+                     (('动画帧数', 'frames', None), ('头发', 'hair', ['静态头发', '关闭头发', '简化摆动']))):
             row = ttk.Frame(left)
             row.pack(fill="x")
             for label, key, values in pair:
@@ -126,15 +140,42 @@ class Console:
         self.button(left, "生成 / 复用缓存", lambda: self.start("render"), primary=True)
         self.button(left, "强制重新生成", lambda: self.start("render", True))
         self.button(left, "刷新缓存状态", self.refresh)
+        field("质量档位", "profile", ["draft", "preview", "final"], advanced)
+        ttk.Label(advanced, text="final 需要远端 GPU，当前不可用", wraplength=255).pack(anchor="w", pady=6)
+        field("表情", "expression", list(EXPRESSIONS), advanced)
+        field("动作", "motion", list(MOTIONS), advanced)
+        field("强度 0—1", "strength", ["0", "0.3", "0.6", "1"], advanced)
+        field("眼神", "gaze", list(GAZES), advanced)
+        field("进入时间（秒）", "enter", ["0.1", "0.25", "0.5", "1"], advanced)
+        field("退出时间（秒）", "leave", ["0.1", "0.25", "0.5", "1"], advanced)
+        ttk.Label(ai, text="台词 / 向 DeepSeek 提问", wraplength=250).pack(anchor="w")
+        self.prompt = tk.Text(ai, width=27, height=3, font=("Microsoft YaHei UI", 10), wrap="word")
+        self.prompt.pack(fill="x", pady=6)
+        self.prompt.insert("1.0", "你好，欢迎来到数字人测试。")
+        self.provider = tk.StringVar(root, "mock")
+        ttk.Combobox(ai, textvariable=self.provider, values=["mock", "deepseek"], state="readonly", width=26).pack(fill="x", pady=4)
+        self.model = tk.StringVar(root, os.environ.get("DEEPSEEK_MODEL", "deepseek-flash"))
+        ttk.Label(ai, text="DeepSeek 模型（可修改）").pack(anchor="w")
+        ttk.Entry(ai, textvariable=self.model).pack(fill="x", pady=4)
+        ttk.Label(ai, text="API Key（仅本次会话）").pack(anchor="w")
+        self.secret = tk.StringVar(root)
+        ttk.Entry(ai, textvariable=self.secret, show="•").pack(fill="x", pady=4)
+        ttk.Button(ai, text="设置会话密钥", command=self.set_secret).pack(fill="x", pady=4)
+        self.button(ai, "准备台词（本地测试语音）", lambda: self.prepare_text(False))
+        self.button(ai, "对话 → 准备回复语音", lambda: self.prepare_text(True))
+        self.button(ai, "对话 → 生成并播放", lambda: self.prepare_text(True, True))
+        ttk.Button(ai, text="清空会话上下文", command=lambda: self.context.clear()).pack(fill='x', pady=3)
+        ttk.Label(ai, text="mock 为固定模拟回复；语音为系统 SAPI，嘴型按音量近似，非音素对齐。ASR 尚未接入。", wraplength=255).pack(anchor="w", pady=6)
         tools = ttk.Frame(right)
         tools.pack(fill="x", pady=(0, 8))
         self.badge = ttk.Label(tools, text="检查缓存…", font=("Microsoft YaHei UI", 11, "bold"))
         self.badge.pack(side="left")
-        for label, kind in (("运行自动测试", "tests"), ("生成模拟 TTS", "mock-tts")):
+        ttk.Button(tools, text='缓存管理', command=self.cache_manage).pack(side='right', padx=(6,0))
+        for label, kind in (("步骤验收", "acceptance"), ("自动测试", "tests"), ("模拟 TTS", "mock-tts")):
             button = ttk.Button(tools, text=label, command=lambda task=kind: self.start(task))
             button.pack(side="right", padx=(6, 0))
             self.widgets.append((button, "normal"))
-        preview_box = tk.Frame(right, width=680, height=280, bg="#18201e")
+        preview_box = tk.Frame(right, width=680, height=200, bg="#18201e")
         preview_box.pack(fill="x")
         preview_box.pack_propagate(False)
         self.preview = tk.Label(preview_box, text="生成后显示缓存预览", bg="#18201e", fg="#c5d3ca",
@@ -147,7 +188,13 @@ class Console:
         ttk.Button(controls, text="停止播放", command=self.stop).pack(side="left", padx=8)
         self.loop = tk.BooleanVar(root, True)
         ttk.Checkbutton(controls, text="循环播放", variable=self.loop).pack(side="left")
-        ttk.Label(right, text="视频在独立原生窗口播放；空格暂停。停止播放不会取消离线生成。", foreground="#68796f").pack(anchor="w")
+        state_controls = ttk.Frame(right)
+        state_controls.pack(fill="x", pady=(0, 5))
+        reel_button=ttk.Button(state_controls, text="生成四状态演示", command=lambda: self.start('reel'))
+        reel_button.pack(side='left', padx=(0,8))
+        self.widgets.append((reel_button,'normal'))
+        ttk.Button(state_controls, text="播放上次状态演示", command=self.play_reel).pack(side='left')
+        ttk.Label(right, text="原生窗口播放；空格暂停。停止阻止旧结果抢播，后台生成可继续缓存。", foreground="#68796f").pack(anchor="w")
         self.status = tk.StringVar(root, "准备就绪")
         ttk.Label(right, textvariable=self.status, wraplength=650).pack(anchor="w", pady=(14, 6))
         self.progress = ttk.Progressbar(right, maximum=100)
@@ -172,7 +219,7 @@ class Console:
         names = [entry["name"] for entry in self.presets]
         self.preset_widget.configure(values=names)
         current = self.variables["preset"].get()
-        self.variables["preset"].set(current if current in names else names[0])
+        self.variables["preset"].set(current if current in names else ('自定义台词 / AI 回复' if '自定义台词 / AI 回复' in names else names[0]))
 
     def changed(self, key):
         if self.suppress:
@@ -185,10 +232,25 @@ class Console:
             for field in ("fps", "samples"):
                 self.variables[field].set(str(config["quality"][field]))
             self.variables["frames"].set(str(config["performance"]["frames"]))
-            self.variables["hair"].set("静态头发" if config["quality"]["hair"] == "static" else "关闭头发")
+            self.variables["hair"].set({"static":"静态头发", "none":"关闭头发", "sway":"简化摆动"}[config["quality"]["hair"]])
+            self.variables["profile"].set(config['quality']['profile'])
+            for name, default in (("expression","neutral-with-blink"),("strength",0.6),("gaze","camera"),("enter",0.25),("leave",0.25)):
+                self.variables[name].set(str(config['performance'].get(name,default)))
+            self.variables['motion'].set(config['performance']['motion_revision'])
             self.variables["camera"].set("头部近景" if config["scene"]["camera"] == "head-closeup" else "固定半身")
             self.text_label.configure(text=config["performance"]["text"] or "无对白 · 眨眼、转头与呼吸")
             self.suppress = False
+        if key == 'profile':
+            profile = self.variables['profile'].get()
+            if profile in PROFILES:
+                self.suppress = True
+                quality = PROFILES[profile]
+                self.variables['resolution'].set(f"{quality['width']} × {quality['height']}")
+                for name in ('fps','samples'):
+                    self.variables[name].set(str(quality[name]))
+                self.variables['hair'].set({'static':'静态头发','sway':'简化摆动'}[quality['hair']])
+                self.suppress = False
+        self.gate.stop()
         self.player.stop()
         self.summary = None
         self.play_button.configure(state="disabled")
@@ -202,7 +264,10 @@ class Console:
         preset = next(entry["id"] for entry in self.presets if entry["name"] == variables["preset"])
         return {"preset": preset, "settings": {"width": width, "height": height, "fps": int(variables["fps"]),
                 "samples": int(variables["samples"]), "frames": int(variables["frames"]),
-                "hair": "static" if variables["hair"] == "静态头发" else "none",
+                "hair": {"静态头发":"static", "关闭头发":"none", "简化摆动":"sway"}[variables["hair"]],
+                "profile": variables['profile'], "expression":variables['expression'], "motion":variables['motion'],
+                "strength":float(variables['strength']), "gaze":variables['gaze'],
+                "enter":float(variables['enter']), "leave":float(variables['leave']),
                 "camera": "head-closeup" if variables["camera"] == "头部近景" else "fixed-half-body"}}
 
     def refresh(self):
@@ -226,13 +291,21 @@ class Console:
                 self.results.put((request_id, None, None, str(error)))
         self.pool.submit(work)
 
-    def start(self, kind, force=False):
+    def start(self, kind, force=False, request=None):
+        if self.busy:
+            return
         try:
-            config = selection(self.payload()) if kind == "render" else None
+            config = selection(self.payload()) if kind in ("render", "reel") else None
             self.player.stop()
             self.request_id += 1
-            self.jobs.start(kind, config, force)
+            self.reel_token = self.gate.begin()
+            self.jobs.start(kind, config, force, request)
             self.set_busy(True)
+            if kind == 'answer':
+                try:
+                    self.play_wait_state('thinking')
+                except Exception:
+                    self.waiting_player=False
             self.status.set("任务启动中…")
             self.progress["value"] = 0
         except Exception as error:
@@ -259,12 +332,13 @@ class Console:
             self.play_button.configure(state="normal" if summary["hit"] else "disabled")
             if image:
                 self.image = tk.PhotoImage(data=base64.b64encode(image))
-                self.preview.configure(image=self.image, text="", width=680, height=280)
+                self.preview.configure(image=self.image, text="", width=680, height=200)
             else:
-                self.image = tk.PhotoImage(width=680, height=280)
-                self.image.put("#18201e", to=(0, 0, 680, 280))
+                self.image = tk.PhotoImage(width=680, height=200)
+                self.image.put("#18201e", to=(0, 0, 680, 200))
                 self.preview.configure(image=self.image, text="")
-            self.status.set("配置命中缓存，可直接播放。" if summary["hit"] else "点击生成，离线制作当前配置的视频。")
+            if not self.player.process or self.player.process.poll() is not None:
+                self.status.set("配置命中缓存，可直接播放。" if summary["hit"] else "点击生成，离线制作当前配置的视频。")
         job = self.jobs.snapshot()
         if job and self.busy:
             labels = {"starting": "任务启动中", "blender": "Blender 渲染", "encode": "编码", "decode": "完整解码", "cache-hit": "缓存命中"}
@@ -276,30 +350,123 @@ class Console:
             self.log.see("end")
             self.log.configure(state="disabled")
             if job["state"] != "running":
-                self.set_busy(False)
-                if job["state"] == "failed":
-                    self.status.set("任务失败，查看日志；原有缓存保留。")
-                elif job["kind"] == "mock-tts":
-                    self.reload_presets()
-                    self.status.set("模拟 TTS 已更新，请生成对应视频。")
-                elif job["kind"] == "tests":
-                    self.status.set("自动测试全部通过。")
-                else:
-                    self.refresh()
+                try:
+                    self.set_busy(False)
+                    if job["state"] == "failed":
+                        if self.waiting_player:
+                            self.player.stop()
+                            self.waiting_player=False
+                        self.status.set("任务失败，查看日志；原有缓存保留。")
+                    elif job["kind"] == "mock-tts":
+                        self.reload_presets()
+                        self.status.set("模拟 TTS 已更新，请生成对应视频。")
+                    elif job["kind"] == 'answer':
+                        may_play=self.gate.accepts(self.reel_token)
+                        if self.waiting_player:
+                            self.player.stop()
+                            self.waiting_player=False
+                        if may_play:
+                            self.context=json.loads((Path(job['output_dir'])/'result.json').read_text('utf-8'))['context']
+                        self.reload_presets()
+                        self.variables['preset'].set('自定义台词 / AI 回复')
+                        if may_play:
+                            answer=json.loads((Path(job['output_dir'])/'answer.json').read_text('utf-8'))
+                            verified=cache_status(answer['config'])
+                            if not verified['hit']:
+                                raise ValueError('回复缓存丢失或损坏，请重新生成')
+                            self.player.play(verified['media_path'],False)
+                            self.status.set('speaking：正在播放已生成回复。')
+                        else:
+                            self.status.set('回复已缓存；已停止的旧任务不会抢播。')
+                    elif job["kind"] == "text":
+                        self.context=json.loads((Path(job['output_dir'])/'result.json').read_text('utf-8'))['context']
+                        self.reload_presets()
+                        self.variables['preset'].set('自定义台词 / AI 回复')
+                        self.status.set('语音准备完成，请点击生成视频。嘴型为音量近似测试。')
+                    elif job["kind"] == "reel":
+                        result=json.loads((Path(job['output_dir'])/'reel.json').read_text('utf-8'))
+                        self.reel_media=result['media_path']
+                        self.status.set('状态演示已缓存。点击播放；停止后不会自动抢播。')
+                    elif job["kind"] == "acceptance":
+                        self.status.set('技术验收通过；主观画质和真实外部语音仍需验收。报告位于 work/acceptance/report.json')
+                    elif job["kind"] == "tests":
+                        self.status.set("自动测试全部通过。")
+                    else:
+                        self.refresh()
+                except Exception as error:
+                    self.status.set('任务已结束，预览处理失败：'+str(error))
         self.root.after(200, self.poll)
 
     def play(self):
         try:
             if not self.summary or not self.summary["hit"]:
                 raise ValueError("当前配置无缓存")
-            self.player.play(self.summary["media_path"], self.loop.get())
+            verified=cache_status(selection(self.payload()))
+            if not verified['hit']:
+                raise ValueError('缓存丢失或损坏，请重新生成')
+            self.summary=verified
+            self.player.play(verified["media_path"], self.loop.get())
             self.status.set("正在原生预览窗口播放；空格暂停，停止播放可关闭预览。")
         except Exception as error:
             self.status.set(str(error))
 
     def stop(self):
+        self.gate.stop()
+        self.waiting_player=False
         self.player.stop()
         self.status.set("已停止本控制台启动的预览。")
+
+    def set_secret(self):
+        value=self.secret.get().strip()
+        if value:
+            os.environ['DEEPSEEK_API_KEY']=value
+        self.secret.set('')
+        self.status.set('会话密钥已设置；关闭程序后失效，不写入日志或仓库。' if value else '未输入新密钥；可使用启动环境中的 DEEPSEEK_API_KEY。')
+
+    def prepare_text(self, dialogue, autoplay=False):
+        if self.busy:
+            return
+        request=dict(text=self.prompt.get('1.0','end').strip(), dialogue=dialogue,
+                     provider=self.provider.get(), model=self.model.get(), profile=self.variables['profile'].get(),
+                     expression=self.variables['expression'].get(), motion=self.variables['motion'].get(), context=self.context[-12:],
+                     camera='fixed-half-body' if autoplay else ('head-closeup' if self.variables['camera'].get()=='头部近景' else 'fixed-half-body'))
+        self.start('answer' if autoplay else 'text',request=request)
+
+    def play_wait_state(self, state):
+        from playback import state_config
+        from cache_pipeline import lookup
+        media=lookup(PROJECT/'.cache/digitalhuman',state_config(state))
+        if media:
+            self.player.play(media,True)
+            self.waiting_player=True
+
+    def play_reel(self):
+        if self.busy:
+            self.status.set('请等待当前任务完成；可随时停止已有播放。')
+            return
+        try:
+            result=json.loads((WORK/'reel.json').read_text('utf-8'))
+            media=Path(result['media_path'])
+            from layer_cache import digest
+            manifest=json.loads((media.parent/'layer.json').read_text('utf-8'))
+            if digest(media) != manifest['files']['reel.mp4']:
+                raise ValueError('状态演示缓存损坏，请重新生成')
+            self.gate.begin()
+            self.player.play(media,False)
+            self.status.set(f"上次缓存状态演示（{manifest['identity']['profile']}）：待机 → 倾听 → 思考 → 讲话；120ms 黑场过渡。")
+        except Exception as error:
+            self.status.set(str(error))
+
+    def cache_manage(self):
+        from cache_admin import inventory, clean_previous
+        entries=inventory(PROJECT/'.cache/digitalhuman')
+        total=sum(e['bytes'] for e in entries)
+        previous=sum(e['bytes'] for e in entries if e['previous'])
+        if not previous:
+            messagebox.showinfo('视频缓存',f'{len(entries)} 项，共 {total/1024**2:.1f} MiB；没有可清理的旧版本。分层缓存另保存在 .cache/layers。',parent=self.root)
+        elif not self.busy and messagebox.askyesno('清理旧版本',f'视频缓存共 {total/1024**2:.1f} MiB。删除被替换的旧版本可释放 {previous/1024**2:.1f} MiB。保留当前缓存，是否清理？',parent=self.root):
+            removed=clean_previous(PROJECT/'.cache/digitalhuman')
+            self.status.set(f'已清理旧版本 {removed/1024**2:.1f} MiB')
 
     def close(self):
         if self.busy:

@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import uuid
+from layer_cache import key_lock
 
 VERSION = 1
 MEDIA_NAMES = {".mp4", ".webm", ".mov"}
@@ -83,9 +84,16 @@ def publish(root, config, source):
         (stage / "manifest.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         # Preserve an earlier entry on replacement; no recursive deletion of caches.
+        backup = None
         if destination.exists():
-            destination.rename(root / (key + ".previous-" + uuid.uuid4().hex))
-        stage.rename(destination)
+            backup = root / (key + ".previous-" + uuid.uuid4().hex)
+            destination.rename(backup)
+        try:
+            stage.rename(destination)
+        except OSError:
+            if backup:
+                backup.rename(destination)
+            raise
         return destination / filename
     finally:
         if stage.exists():
@@ -130,15 +138,20 @@ def main(argv=None):
         if args.action in {"prepare", "import"}:
             if media and not args.force:
                 print("CACHE HIT: generation skipped")
-            elif args.action == "import":
-                if not args.video:
-                    raise ValueError("import requires --video")
-                media = publish(args.cache, config, args.video)
             else:
-                if not args.command_file:
-                    raise ValueError("Cache miss: configure external renderer with --command-file, or import a video")
-                command = json.loads(Path(args.command_file).read_text("utf-8-sig"))
-                media = generate(args.cache, config, command)
+                with key_lock(args.cache, cache_key(config)):
+                    media = lookup(args.cache, config)
+                    if media and not args.force:
+                        print("CACHE HIT: generation skipped")
+                    elif args.action == "import":
+                        if not args.video:
+                            raise ValueError("import requires --video")
+                        media = publish(args.cache, config, args.video)
+                    else:
+                        if not args.command_file:
+                            raise ValueError("Cache miss: configure external renderer with --command-file, or import a video")
+                        command = json.loads(Path(args.command_file).read_text("utf-8-sig"))
+                        media = generate(args.cache, config, command)
         if not media:
             raise ValueError("Cache miss or damaged cache: run prepare / import first; play never calls APIs")
         print("CACHED VIDEO / 缓存回放: " + str(media.resolve()))

@@ -97,7 +97,11 @@ def render(config_path, output):
                   "--width", str(quality["width"]), "--height", str(quality["height"]),
                   "--fps", str(quality["fps"]), "--samples", str(quality["samples"]),
                   "--frames", str(performance["frames"]), "--hair", quality["hair"],
-                  "--camera", config["scene"]["camera"], *speech_args], 1800)
+                  "--camera", config["scene"]["camera"], "--skin", quality["skin"],
+                  "--expression", performance["expression"], "--motion", performance["motion_revision"],
+                  "--strength", str(performance.get("strength", 0.6)),
+                  "--enter", str(performance.get("enter", 0.25)), "--leave", str(performance.get("leave", 0.25)),
+                  "--gaze", performance.get("gaze", "camera"), *speech_args], 1800)
         for frame in range(1, performance["frames"] + 1):
             image = frames / f"frame_{frame:04d}.png"
             if not image.is_file() or image.stat().st_size == 0:

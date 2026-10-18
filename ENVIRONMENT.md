@@ -2,6 +2,8 @@
 
 2026 年 10 月 18 日已完成安装与基础验证。
 
+最新开发已扩展到第 10 步的桌面技术初版，以下历史小节保留各阶段的测试数量和结果。当前外部服务验证状态：DeepSeek 对话适配器已实现，但尚无密钥用于真实请求；外部 TTS / 对齐与 ASR 未接入。测试语音仍为系统 SAPI，不能代表真人音画同步验收。
+
 ## 已就绪的工具
 
 - Python 3.11.9，项目虚拟环境为 `.venv`，现有程序没有额外 pip 依赖。
@@ -145,3 +147,19 @@ Python 网络 socket 被禁止时，缓存播放路径解析仍成功。系统�
 .\.venv\Scripts\python.exe cache_pipeline.py prepare --config work\mock-tts\render-config.json --command-file renderer-command.json
 .\.venv\Scripts\python.exe cache_pipeline.py play --config work\mock-tts\render-config.json
 ```
+
+## 第 6—10 步本地技术初版
+
+新增行为曲线、质量档位、DeepSeek 对话适配、独立音频 / 面驱 / 对话缓存、状态回放与验收入口，无新增 pip 依赖或本地 AI 模型。桌面窗口已检查当前高 DPI 布局，模拟对话的语音准备、缺少 DeepSeek 密钥的明确报错和音频 / 面驱二次复用已通过实际界面验证。
+
+- 49 项自动测试通过，新增行为范围与首尾归位、上下文缓存隔离、缓存损坏重建、重复锁、发布回滚、密钥错误 / 限流 / 超时、密钥格式保护、任务输出隔离和停止后旧回复不抢播。
+- 修正版 18 个实际渲染主用例通过：10 句中文、4 种独立表情、3 种头发及 1 个 preview 组合片段。视频分辨率、帧率、帧数、音轨、完整解码及末帧闭嘴均检查；全部再次命中视频缓存。
+- 主用例首次生成约 20.962—71.067 秒；二次视频缓存哈希查找约 7.962—14.216 毫秒。后者不是播放器首帧耗时或真实 API 响应延迟。具体数值受本机负载影响。
+- draft 为 640×360 / 24fps / 4 samples；preview 为 960×540 / 24fps / 16 samples、程序化皮肤微小凹凸与简化摆动头发。final 明确拒绝，等待远端后端。Blender 日志内存峰值 53.24—62.58 MiB，仅是 Blender 内部统计，未测操作系统进程峰值。
+- 视觉抽检发现并修正了摆动毛发在太阳穴穿入头皮的问题。保存的旧工程在新增几何回归检查中失败，修正版 preview 全帧通过；对照图与几何记录保存在 work/acceptance/hair-before.png、hair-after.png、hair-fix.json。头发仍是整体网格摆动，没有发丝物理。
+
+实际渲染与缓存报告为 work/acceptance/report.json，原始工程和逐帧图像在各 work/render-jobs 子目录。语音仍是 SAPI 与音量近似嘴型，10 句真实音素同步、主观自然度与真人相似度均未判为通过。
+
+补充验收：8 个实际 .blend 工程的烘焙控制和首尾姿态检查通过，动态毛发全帧几何检查通过；四状态回放为 640×360 / 24fps / 214 帧 / 8.916667 秒，H.264 + AAC，完整解码通过，二次状态回放缓存复用约 0.047 秒。
+
+原生桌面完整链路已验证：生成中停止关闭思考预览，迟到回复仅缓存；同一请求再次命中对话、音频、面驱及视频缓存并播放。循环播放与停止关闭自有播放器通过。已修复 pythonw 嵌套后台进程日志丢失，12 帧实际渲染验证可看到 Blender / 编码 / 解码日志和帧进度。记录分别在 work/acceptance/desktop-validation.json 与 desktop-worker-check.json。
