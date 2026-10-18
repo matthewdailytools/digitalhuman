@@ -134,6 +134,12 @@ Python 网络 socket 被禁止时，缓存播放路径解析仍成功。系统�
 
 输入、音频、事件、截图与报告位于 work/mock-tts；逐任务场景与视频保留在 work/render-jobs。关键控制器为 MouthLips / MouthInterior 的 Shape Key 与 Head 的 JawOpen，时间基准 t=(frame-1)/fps。
 
+## 原生桌面控制台验证
+
+使用现有 Python 3.11 / Tk 8.6，入口 desktop_console.py 和 start_desktop.cmd；桌面与开始菜单已创建“数字人测试控制台”快捷方式。没有网页服务。任务日志保留在 work/desktop。
+
+24 项自动测试通过，新增配置校验、串行任务保护、本地媒体路径、播放器进程归属测试。通过实际桌面界面验证缓存命中、原生 FFplay 播放与停止，以及从控制台启动测试。停止播放只结束本控制台持有的播放器，不会取消生成或关闭其他播放器。已检查当前高 DPI 屏幕下主要控件可见。人物仍为技术测试人偶，外部 API 尚未接入。
+
 ```powershell
 .\.venv\Scripts\python.exe tools\mock_tts.py
 .\.venv\Scripts\python.exe cache_pipeline.py prepare --config work\mock-tts\render-config.json --command-file renderer-command.json
