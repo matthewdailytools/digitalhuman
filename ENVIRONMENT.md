@@ -72,3 +72,24 @@ Python 网络 socket 被禁止时，缓存播放路径解析仍成功。系统�
 ```powershell
 .\.venv\Scripts\python.exe cache_pipeline.py play --config work\real-video-validation\config.json
 ```
+
+## 第三步简化人物验证
+
+已用 `tools/create_head_scene.py` 生成无外部资产依赖的测试头部与半身：31 个对象、10868 个网格顶点、简单材质、静态头发、固定镜头、EEVEE 16 采样。该模型是流程测试人偶，不是写实成品。眼部用简化缩放表示眨眼，尚无真实眼睑绑定和语音嘴型。
+
+结果位于 `work/head-scene-v1/`：still/preview.png 为静帧；animation/head-v1.blend 为可编辑场景；animation/head-v1.mp4 为 5 秒无音轨样片；scene-report.json、validation.json、video-probe.json 和 render.log 保存渲染与检查结果。
+
+- 720p 静帧通过，并修正初始镜头裁切问题；已检查睁眼、闭眼和反向转头画面。
+- 实际渲染 120 帧，24fps、1280×720，首次动画生成约 126.946 秒。该耗时不等于视频播放帧率。
+- 重新加载保存的 .blend，验证头部 ±7° 转动、两次眨眼、呼吸、首尾姿态与测试帧中的头部镜头范围。
+- 关闭头发后生成 30 对象 / 10148 顶点版本，确认头发网格可移除；未对该版本另做完整动画渲染。
+- MP4 帧数为 120、时长 5 秒，完整解码通过；已导入独立缓存，二次 prepare 命中并跳过生成，默认播放器已启动。
+
+角色控制协议：Z 向上、人物正面为 -Y，单位为米；BodyControl 控制整体位移，HeadControl 控制头部旋转，EyeAperture_-1 / EyeAperture_1 控制简化眼部开合。此阶段使用变换控制器，没有生产级骨架或表情 Shape Key 系统。
+
+重新打开场景或播放缓存：
+
+```powershell
+.\.venv\Scripts\python.exe tools\blender.py work\head-scene-v1\animation\head-v1.blend
+.\.venv\Scripts\python.exe cache_pipeline.py play --config work\head-scene-v1\animation\cache-config.json
+```

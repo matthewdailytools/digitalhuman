@@ -6,6 +6,46 @@
 
 本机已完成的环境安装、验证结果和启动命令见 [本机环境](ENVIRONMENT.md)。
 
+## 简化人物场景
+
+`tools/create_head_scene.py` 用 Blender 自带几何建立测试头部与半身，包含静态网格头发、简化眼部开合、轻微转头和呼吸。资产由脚本生成，无外部贴图或模型依赖。它是流程测试人物，尚非真人级角色；眼部开合采用几何缩放，嘴部保持闭合，尚未实现真实眼睑或语音口型。
+
+生成 720p 静帧及可编辑 .blend：
+
+```powershell
+.\.venv\Scripts\python.exe tools\blender.py --background --factory-startup --python tools\create_head_scene.py -- --output work\head-scene-v1\still --render still
+```
+
+生成 5 秒、24fps 动画序列；使用不同输出目录保存每次测试，避免旧帧混入：
+
+```powershell
+.\.venv\Scripts\python.exe tools\blender.py --background --factory-startup --python tools\create_head_scene.py -- --output work\head-scene-v1\animation --frames 120 --render animation
+```
+
+参数 `--width`、`--height`、`--frames` 控制输出规模，`--hair none` 关闭头发。场景使用 EEVEE、16 采样、固定镜头和简单材质，无细分与毛发物理；保存的 .blend 默认以低成本 Solid 视口打开。BodyControl 负责身体位移，HeadControl 负责头部旋转，EyeAperture 控制简化眨眼。
+
+检查保存场景的转头、眨眼、呼吸、首尾姿态和头部镜头范围：
+
+```powershell
+.\.venv\Scripts\python.exe tools\blender.py --background work\head-scene-v1\animation\head-v1.blend --python tools\validate_head_scene.py -- --output work\head-scene-v1\animation\validation.json
+```
+
+校验脚本针对默认 720p、120 帧测试配置。渲染输出、报告与模型位于忽略的 work 目录，代码提交即可复现，不将生成图像或大资产提交到 Git。
+
+合成为无对白 MP4：
+
+```powershell
+ffmpeg -framerate 24 -start_number 1 -i work\head-scene-v1\animation\frame_%04d.png -frames:v 120 -c:v libx264 -pix_fmt yuv420p -movflags +faststart work\head-scene-v1\animation\head-v1.mp4
+```
+
+当前已生成样片、保存工程并导入独立测试缓存，可再次播放：
+
+```powershell
+.\.venv\Scripts\python.exe cache_pipeline.py play --config work\head-scene-v1\animation\cache-config.json
+```
+
+该缓存配置是本次验证的本地输出；重新运行场景脚本后，需要依据新生成参数和生成器版本重新建立配置并导入。自动生成器与缓存的一步集成属于下一阶段。
+
 ## 当前实现边界
 
 本仓库已实现 Python 标准库缓存管线；尚未接入 Blender / Unreal 渲染器或外部 AI API，也没有预置人物视频。运行时播放已渲染的完整视频，不在本机实时渲染人物。必须提供实际视频或外部生成命令后才能看到效果。自动测试只验证缓存行为，不代表完成画质或视频解码验收。
