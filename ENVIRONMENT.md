@@ -54,3 +54,21 @@
 ```
 
 此环境尚未接入人物资产或外部 API。接下来按 DEVELOPMENT.md 步骤 3 建立简化头部场景，再实现自动生成器。
+
+## 下载视频缓存验证
+
+使用下载目录中的 `video_文明重启：荒野榨取花椒籽油和芝麻..._0.mp4` 完成真实视频缓存测试。原文件约 539.5MiB、31 分 9.85 秒，1920×1080、29.97fps、H.264，带 44.1kHz AAC 双声道音频。保留原始内容，不重新编码。
+
+测试使用独立配置 `work/real-video-validation/config.json`，未改动 prototype.json。该配置中的 fps=30 表示整数名义值，精确源帧率另记为 2997/100，不会据此改变导入视频。
+
+验证记录在 `work/real-video-validation/result.json`：导入约 0.934 秒，第二次 prepare 约 0.82 秒（含缓存校验，不是播放器首帧时间）；修改表情配置后未命中，恢复后重新命中。第二次 prepare 即使提供不存在的生成器命令文件仍然成功，证明命中后跳过生成器。源文件导入前后哈希一致。
+
+FFmpeg 对完整 31 分钟视频的画面和音频解码检查已通过，退出码为 0，错误日志为空。解码结果记录在同目录的 decode-result.txt 和 decode-errors.log。
+
+Python 网络 socket 被禁止时，缓存播放路径解析仍成功。系统网络保持连接；这不等于 Windows 媒体播放器的整机断网验收。已调用默认播放器打开缓存，并检测到媒体播放器窗口，声音和观看体验仍需人工确认。
+
+重新播放本次缓存：
+
+```powershell
+.\.venv\Scripts\python.exe cache_pipeline.py play --config work\real-video-validation\config.json
+```
