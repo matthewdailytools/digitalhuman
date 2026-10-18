@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "character": {"id": "procedural-head", "revision": "v1"},
+  "scene": {"revision": "v1", "camera": "fixed-half-body", "lighting": "three-area-lights"},
+  "quality": {
+    "profile": "draft", "width": 1280, "height": 720, "fps": 24,
+    "samples": 16, "hair": "static", "skin": "simple", "body": "bust"
+  },
+  "performance": {
+    "text": "", "expression": "neutral-with-blink", "motion_revision": "idle-v1", "frames": 72
+  },
+  "generator": {"id": "blender-offline-v1", "revision": "v1"}
+}

@@ -4,7 +4,7 @@
 
 ## 当前状态与完成目标
 
-截至 2026 年 10 月 18 日：已实现配置哈希、完整性校验、视频导入、外部生成命令入口和 Windows 默认播放器启动；6 项自动测试覆盖缓存逻辑。尚无人物资产、实际渲染器、API 适配器和片段调度播放器。
+截至 2026 年 10 月 18 日：已完成最小环境、真实视频缓存、简化人物场景和 Blender 离线生成器；11 项自动测试覆盖缓存与生成验证。已制作本地演示视频。尚无写实人物资产、外部 API 适配器和片段调度播放器。
 
 本机已检测到 Core 7 240H、16GB 内存、Intel 集显、Python 3.11.9、FFmpeg 与 ffprobe。磁盘此前约有 408GiB 可用；内存此前仅约 743MiB 可用，启动开发前应重新检查并关闭不必要的程序。Blender 尚需安装或核实非标准目录安装。
 
@@ -86,7 +86,7 @@ ffmpeg -hide_banner -encoders
 
 ## 步骤 4 实现自动离线生成器
 
-计划新增 renderer.py、Blender 执行脚本和 renderer-command.json；这些文件目前尚不存在。
+已新增 renderer.py、render_settings.py 和 renderer-command.json，并复用 tools/create_head_scene.py。运行入口见 README 的一条命令自动生成。
 
 生成器读取 cache_pipeline.py 传入的配置快照，依次完成：读取资产 → 实际应用简化选项 → 加载音频和动画 → 分任务工作目录输出 PNG 序列 → FFmpeg 合成 MP4 → ffprobe 检查 → 成功返回。
 

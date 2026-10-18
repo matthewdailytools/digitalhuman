@@ -27,6 +27,9 @@ def read_config(path):
         value = quality.get(name)
         if type(value) is not int or value <= 0:
             raise ValueError(f"quality.{name} must be a positive integer")
+    if config["generator"].get("id") == "blender-offline-v1":
+        from render_settings import resolve
+        config = resolve(config)
     return config
 
 
@@ -101,6 +104,7 @@ def generate(root, config, command):
         snapshot = Path(temporary) / "config.json"
         snapshot.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
         argv = [arg.replace("{config}", str(snapshot)).replace("{output}", str(output))
+                .replace("{python}", sys.executable).replace("{project}", str(Path(__file__).resolve().parent))
                 for arg in command]
         subprocess.run(argv, check=True, shell=False)
         return publish(root, config, output)

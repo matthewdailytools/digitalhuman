@@ -93,3 +93,27 @@ Python 网络 socket 被禁止时，缓存播放路径解析仍成功。系统�
 .\.venv\Scripts\python.exe tools\blender.py work\head-scene-v1\animation\head-v1.blend
 .\.venv\Scripts\python.exe cache_pipeline.py play --config work\head-scene-v1\animation\cache-config.json
 ```
+
+## 第四步自动离线生成验证
+
+已接入 renderer.py、render_settings.py、renderer-command.json 与 configs/head-draft.json。首次 prepare 自动完成配置快照、Blender 渲染、FFmpeg 编码、视频流与完整解码检查、缓存发布；再次 prepare 跳过生成器。
+
+实测结果：
+
+- 720p / 24fps / 72 帧（3 秒）/ 静态头发：Blender 阶段约 78.222 秒，编码约 0.553 秒，解码约 0.081 秒。
+- 同配置第二次 prepare 约 0.207 秒，即使命令文件不存在仍命中，且没有新增渲染任务。
+- 360p / 24fps / 24 帧 / 无头发 / 半秒预录测试音：生成、音频补静音、AAC 音轨检查及完整解码通过；Blender 阶段约 11.189 秒。该音频不是 TTS，也不驱动嘴型。
+- 过长音频在 Blender 启动前拒绝，未产生可命中缓存；强制重建进程失败后原有缓存仍通过完整性检查。
+- 同一路径的音频内容变化使旧缓存失效，恢复内容后重新命中。代码变化使缓存失效由自动测试覆盖。
+- 11 项自动测试通过，覆盖缓存、错误设置、帧数 / 帧率 / 分辨率、音轨缺失 / 过短及旧配置快照。
+
+本次端到端记录在 work/offline-validation/result.json。逐任务的配置、.blend、PNG、MP4、渲染日志与报告保留在 work/render-jobs。该目录没有自动容量清理或并发控制。
+
+一条命令生成，再次执行即复用缓存；播放使用同一配置：
+
+```powershell
+.\.venv\Scripts\python.exe cache_pipeline.py prepare --config configs\head-draft.json --command-file renderer-command.json
+.\.venv\Scripts\python.exe cache_pipeline.py play --config configs\head-draft.json
+```
+
+支持修改分辨率、fps、samples、头发开关和动画帧数，未知设置会报错。默认人物配置 prototype.json 和历史导入缓存继续保留。下一步为嘴型控制，再接外部 TTS 与面驱。

@@ -73,7 +73,7 @@ def aim(obj, target):
     obj.rotation_euler = (Vector(target) - obj.location).to_track_quat("-Z", "Y").to_euler()
 
 
-def build_scene(width, height, frames, hair):
+def build_scene(width, height, frames, hair, fps=24, samples=16):
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete(use_global=False)
     skin = material("Skin_Draft", (0.56, 0.32, 0.22))
@@ -149,12 +149,12 @@ def build_scene(width, height, frames, hair):
         mesh("Hair_StaticCap", vertices, faces, dark, head)
     scene = bpy.context.scene
     scene.render.engine = "BLENDER_EEVEE_NEXT"
-    scene.eevee.taa_render_samples = 16
+    scene.eevee.taa_render_samples = samples
     scene.render.resolution_x = width
     scene.render.resolution_y = height
     scene.render.resolution_percentage = 100
     scene.render.image_settings.file_format = "PNG"
-    scene.render.fps = 24
+    scene.render.fps = fps
     scene.frame_start, scene.frame_end = 1, frames
     scene.world.color = (0.15, 0.15, 0.15)
     scene.view_settings.view_transform = "AgX"
@@ -188,7 +188,8 @@ def build_scene(width, height, frames, hair):
         head.keyframe_insert("rotation_euler", frame=frame)
         body.location.z = 0.003 * (1 - math.cos(phase))
         body.keyframe_insert("location", frame=frame)
-        blink = max(max(0, 1 - abs(frame - center) / 3) for center in (23, 53))
+        blink = max(max(0, 1 - abs(frame - center) / max(1, fps / 8))
+                    for center in (round(23 * fps / 24), round(53 * fps / 24)))
         for eye in eyes:
             eye.scale.z = 1 - blink * 0.96
             eye.keyframe_insert("scale", frame=frame)
@@ -211,14 +212,16 @@ parser.add_argument("--output", required=True)
 parser.add_argument("--width", type=int, default=1280)
 parser.add_argument("--height", type=int, default=720)
 parser.add_argument("--frames", type=int, default=72)
+parser.add_argument("--fps", type=int, default=24)
+parser.add_argument("--samples", type=int, default=16)
 parser.add_argument("--hair", choices=["none", "static"], default="static")
 parser.add_argument("--render", choices=["still", "animation", "none"], default="still")
 args = parser.parse_args(sys.argv[sys.argv.index("--") + 1:])
-if args.width <= 0 or args.height <= 0 or args.frames < 2:
+if args.width <= 0 or args.height <= 0 or args.frames < 2 or args.fps < 1 or args.samples < 1:
     raise ValueError("Positive dimensions and at least two frames are required")
 output = Path(args.output).resolve()
 output.mkdir(parents=True, exist_ok=True)
-scene = build_scene(args.width, args.height, args.frames, args.hair)
+scene = build_scene(args.width, args.height, args.frames, args.hair, args.fps, args.samples)
 scene.render.filepath = str(output / ("frame_" if args.render == "animation" else "preview.png"))
 assert scene.camera and bpy.data.objects.get("HeadControl") and bpy.data.objects.get("Head")
 assert len(bpy.data.objects["Head"].data.vertices) < 10000
@@ -231,7 +234,7 @@ elif args.render == "still":
 report = {
     "blender": bpy.app.version_string, "revision": scene["asset_revision"],
     "engine": scene.render.engine, "samples": scene.eevee.taa_render_samples,
-    "width": args.width, "height": args.height, "fps": 24, "frames": args.frames,
+    "width": args.width, "height": args.height, "fps": args.fps, "frames": args.frames,
     "hair": args.hair, "objects": len(scene.objects),
     "vertices": sum(len(o.data.vertices) for o in scene.objects if o.type == "MESH"),
     "render_mode": args.render, "render_seconds": round(time.perf_counter() - started, 3),

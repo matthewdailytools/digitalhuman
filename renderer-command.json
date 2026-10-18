@@ -1,0 +1,1 @@
+["{python}", "{project}/renderer.py", "--config", "{config}", "--output", "{output}"]
