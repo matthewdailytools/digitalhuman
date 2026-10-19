@@ -64,7 +64,7 @@ def request_deepseek(messages, model, max_tokens=1024):
     """One authenticated request. Shared by chat and strict action planning; never auto-retry."""
     secret = os.environ.get('DEEPSEEK_API_KEY', '').strip()
     if not secret:
-        raise ValueError('缺少 DEEPSEEK_API_KEY，请在桌面控制台设置会话密钥')
+        raise ValueError('缺少 DEEPSEEK_API_KEY，请在桌面控制台保存 API 密钥')
     if len(secret)>1024 or any(not 33<=ord(c)<=126 for c in secret):
         raise ValueError('密钥格式无效，请勿包含空白、换行或非 ASCII 字符')
     body = dict(model=model, messages=messages, temperature=0.2, max_tokens=max_tokens, stream=False,

@@ -16,6 +16,7 @@ from playback import ResponseGate
 from quality_profiles import PROFILES
 from behavior import EXPRESSIONS, MOTIONS, GAZES
 from micro_control import manual_plan, describe
+from credential_store import ApiCredentials, CredentialError
 
 
 class Player:
@@ -161,10 +162,25 @@ class Console:
         self.model = tk.StringVar(root, os.environ.get("DEEPSEEK_MODEL", "deepseek-flash"))
         ttk.Label(ai, text="DeepSeek 模型（可修改）").pack(anchor="w")
         ttk.Entry(ai, textvariable=self.model).pack(fill="x", pady=4)
-        ttk.Label(ai, text="API Key（仅本次会话）").pack(anchor="w")
+        ttk.Label(ai, text="API Key（保存后重启可用）").pack(anchor="w")
         self.secret = tk.StringVar(root)
-        ttk.Entry(ai, textvariable=self.secret, show="•").pack(fill="x", pady=4)
-        ttk.Button(ai, text="设置会话密钥", command=self.set_secret).pack(fill="x", pady=4)
+        entry = ttk.Entry(ai, textvariable=self.secret, show="•")
+        entry.pack(fill="x", pady=4)
+        self.widgets.append((entry, 'normal'))
+        secret_buttons = ttk.Frame(ai)
+        secret_buttons.pack(fill='x', pady=3)
+        for label, command in (('保存 / 更换', self.set_secret), ('删除密钥', self.delete_secret)):
+            button = ttk.Button(secret_buttons, text=label, command=command)
+            button.pack(side='left', fill='x', expand=True, padx=(0, 3))
+            self.widgets.append((button, 'normal'))
+        self.credentials = ApiCredentials()
+        self.secret_status = tk.StringVar(root)
+        try:
+            self.credentials.load()
+            self.secret_status.set(self.credentials.status)
+        except CredentialError as error:
+            self.secret_status.set(str(error))
+        ttk.Label(ai, textvariable=self.secret_status, wraplength=255).pack(anchor='w', pady=3)
         self.button(ai, "准备台词（本地测试语音）", lambda: self.prepare_text(False))
         self.button(ai, "对话 → 准备回复语音", lambda: self.prepare_text(True))
         self.button(ai, "对话 → 生成并播放", lambda: self.prepare_text(True, True))
@@ -488,11 +504,26 @@ class Console:
         self.status.set("已停止本控制台启动的预览。")
 
     def set_secret(self):
-        value=self.secret.get().strip()
-        if value:
-            os.environ['DEEPSEEK_API_KEY']=value
-        self.secret.set('')
-        self.status.set('会话密钥已设置；关闭程序后失效，不写入日志或仓库。' if value else '未输入新密钥；可使用启动环境中的 DEEPSEEK_API_KEY。')
+        if self.busy:
+            return
+        try:
+            self.credentials.save(self.secret.get())
+            self.secret.set('')
+            self.secret_status.set(self.credentials.status)
+            self.status.set('密钥已保存 / 更新，立即生效；重启后自动读取。')
+        except CredentialError as error:
+            self.status.set(str(error))
+
+    def delete_secret(self):
+        if self.busy:
+            return
+        try:
+            self.credentials.delete()
+            self.secret.set('')
+            self.secret_status.set(self.credentials.status)
+            self.status.set('已删除本机保存的密钥，并清除当前会话密钥。')
+        except CredentialError as error:
+            self.status.set(str(error))
 
     def show_plan(self, plan):
         self.plan_view.configure(state='normal')
