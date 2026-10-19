@@ -246,7 +246,7 @@ class Console:
         self.live_mode=tk.StringVar(root,'快速实体')
         entry=ttk.Combobox(realtime,textvariable=self.live_mode,values=['快速实体','实时材质'],state='readonly')
         entry.pack(fill='x',pady=5);entry.bind('<<ComboboxSelected>>',self.live_changed)
-        self.live_hair=tk.BooleanVar(root,False)
+        self.live_hair=tk.BooleanVar(root,True)
         ttk.Checkbutton(realtime,text='显示短发（增加图形负载）',variable=self.live_hair,command=self.live_changed).pack(anchor='w')
         row=ttk.Frame(realtime);row.pack(fill='x',pady=5)
         ttk.Button(row,text='打开实时窗口',command=self.live_start).pack(side='left',expand=True,fill='x')

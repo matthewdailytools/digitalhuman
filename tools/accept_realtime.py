@@ -62,6 +62,7 @@ def main():
             time.sleep(.01)
     try:
         live.start();first=wait(lambda s:s['phase']=='running',120);pid=first['pid']
+        assert first['hair_visible'] and first['hair_strands']==42000,'Original short hair should be visible by default'
         print('REALTIME READY',first,flush=True)
         lock_checks=[]
         for name in ('heartbeat.json','status.json'):

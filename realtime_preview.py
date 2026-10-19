@@ -97,7 +97,7 @@ class RealtimePreview:
             with self.lock:
                 if cancel.is_set() and self.session==session and self.process is None:self.phase='stopped'
 
-    def publish(self,state,mode='solid',hair=False,sample=False,capture=False):
+    def publish(self,state,mode='solid',hair=True,sample=False,capture=False):
         state=validate_state(state)
         if mode not in MODES or any(type(x) is not bool for x in (hair,sample,capture)):
             raise ValueError('无效实时预览选项')

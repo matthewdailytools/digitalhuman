@@ -138,6 +138,8 @@ def tick():
                         controls={k:rig[k] for k in CHANNELS},target=target_state,
                         shape_values={k:keys[k].value for k in ('EyeClose','SmileCorners','SmileCheeks','SmileLids','SmileOpenCorrective')},
                         jaw_angle=rig.pose.bones['Jaw'].rotation_euler.x,active=active,
+                        hair_visible=not hair.hide_get(),hair_strands=len(hair.data.curves),
+                        rig_sha256=session['rig_sha256'],
                         sample_playing=sample_started is not None,
                         head_angle=rig.pose.bones['Head'].rotation_euler.x,
                         neck_angle=rig.pose.bones['Neck'].rotation_euler.x,
