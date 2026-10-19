@@ -80,6 +80,10 @@ def render(config_path, output):
                 raise ValueError("Audio must fit the configured frame timeline; increase frames")
             report["has_audio"] = True
         speech_args = []
+        if performance.get('micro_control'):
+            plan_path = job / 'micro-plan.json'
+            plan_path.write_text(json.dumps(performance['micro_control'], ensure_ascii=False), 'utf-8')
+            speech_args += ['--plan-file', str(plan_path)]
         if performance.get("tts_file"):
             if sha256(performance["tts_file"]) != performance["tts_sha256"]:
                 raise ValueError("TTS bundle changed after cache configuration was resolved")
@@ -87,7 +91,7 @@ def render(config_path, output):
             bundle["audio_file"] = str(audio)
             speech_path = job / "tts.json"
             speech_path.write_text(json.dumps(bundle, ensure_ascii=False, indent=2), encoding="utf-8")
-            speech_args = ["--tts-file", str(speech_path)]
+            speech_args += ["--tts-file", str(speech_path)]
             report["speech_source"] = bundle.get("source", "unspecified")
             report["alignment"] = bundle.get("alignment", "unspecified")
         frames = job / "frames"

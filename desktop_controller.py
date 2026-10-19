@@ -16,6 +16,7 @@ from speech import load_bundle
 WORK = PROJECT / "work/desktop"
 CACHE = PROJECT / ".cache/digitalhuman"
 PRESETS = {"mock-tts": PROJECT / "work/mock-tts/render-config.json", "head-draft": PROJECT / "configs/head-draft.json", "custom": PROJECT / "work/text/render-config.json"}
+PRESETS['micro'] = PROJECT/'work/micro/render-config.json'
 
 def worker_python():
     # GUI pythonw can lose stdout in nested workers; console python stays hidden via Popen flags.
@@ -40,6 +41,8 @@ def presets():
             config = json.loads(path.read_text("utf-8-sig"))
             result.append({"id": key, "name": "模拟中文 TTS / 嘴型" if key == "mock-tts" else ("自定义台词 / AI 回复" if key == "custom" else ("验收 / "+key.removeprefix('acceptance-') if key.startswith('acceptance-') else "半身 / 待机动画")),
                            "config": config})
+            if key == 'micro':
+                result[-1]['name'] = '五项控制 / 最近结果'
     return result
 
 
@@ -82,7 +85,8 @@ def cache_status(config):
                "width": config["quality"]["width"], "height": config["quality"]["height"],
                "fps": config["quality"]["fps"], "frames": config["performance"]["frames"],
                "duration": config["performance"]["frames"] / config["quality"]["fps"],
-               "text": config["performance"]["text"], "speech": None}
+               "text": config["performance"]["text"], "speech": None,
+               "micro_control": config['performance'].get('micro_control')}
     if media:
         summary["media_path"] = str(media.resolve())
         summary["bytes"] = media.stat().st_size
@@ -104,7 +108,7 @@ class Jobs:
         self.current = None
 
     def start(self, kind, config=None, force=False, request=None):
-        if kind not in ("render", "mock-tts", "tests", "text", "reel", "acceptance", "answer"):
+        if kind not in ("render", "mock-tts", "tests", "text", "reel", "acceptance", "answer", "micro"):
             raise ValueError("未知任务")
         if kind == "render" and not isinstance(config, dict):
             raise ValueError("生成任务需要配置")
@@ -123,10 +127,11 @@ class Jobs:
                            "--command-file", str(PROJECT / "renderer-command.json")]
                 if force:
                     command.append("--force")
-            elif kind in ("text", "answer"):
+            elif kind in ("text", "answer", "micro"):
                 path = directory / "request.json"
                 path.write_text(json.dumps(request, ensure_ascii=False), encoding="utf-8")
-                command = [python, str(PROJECT / ("conversation.py" if kind == "answer" else "text_pipeline.py")), "--request", str(path), "--output", str(response_dir)]
+                script = {'answer': 'conversation.py', 'text': 'text_pipeline.py', 'micro': 'micro_pipeline.py'}[kind]
+                command = [python, str(PROJECT / script), "--request", str(path), "--output", str(response_dir)]
             elif kind == "reel":
                 if not config or not config["performance"].get("tts_file"):
                     raise ValueError("请先选择含语音的配置")
@@ -167,15 +172,15 @@ class Jobs:
                                     candidate = Path(line.split(": ", 1)[1].strip()).resolve()
                                     if candidate.is_relative_to((PROJECT / "work/render-jobs").resolve()):
                                         job["render_dir"] = candidate
-                                        if job['kind'] == 'answer':
+                                        if job['kind'] in ('answer', 'micro'):
                                             job['config'] = json.loads((candidate/'config.json').read_text('utf-8'))
                         if "CACHE HIT" in line:
                             job["stage"] = "cache-hit"
                 code = process.wait()
-            if code == 0 and job['kind'] in ('text','answer','reel'):
+            if code == 0 and job['kind'] in ('text','answer','reel','micro'):
                 # UI consumes its own task output; these atomic pointers only select the latest preset.
-                names = ('reel.json',) if job['kind'] == 'reel' else ('render-config.json','result.json','answer.json')
-                target = PROJECT / ('work/desktop' if job['kind'] == 'reel' else 'work/text')
+                names = ('reel.json',) if job['kind'] == 'reel' else ('render-config.json','result.json','answer.json','plan.json')
+                target = PROJECT / {'reel':'work/desktop','micro':'work/micro'}.get(job['kind'], 'work/text')
                 target.mkdir(parents=True,exist_ok=True)
                 for name in names:
                     source=Path(job['output_dir'])/name

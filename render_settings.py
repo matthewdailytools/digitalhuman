@@ -37,7 +37,7 @@ def validate(config):
         "schema_version": None, "character": set(expected["character"]),
         "scene": set(expected["scene"]) | {"camera"},
         "quality": {"profile", "width", "height", "fps", "samples", "hair", "skin", "body"},
-        "performance": {"text", "expression", "motion_revision", "frames", "audio_file", "audio_sha256", "tts_file", "tts_sha256", "strength", "enter", "leave", "gaze"},
+        "performance": {"text", "expression", "motion_revision", "frames", "audio_file", "audio_sha256", "tts_file", "tts_sha256", "strength", "enter", "leave", "gaze", "micro_control"},
         "generator": {"id", "revision", "resolved_signature"},
     }
     unknown = set(config) - set(allowed)
@@ -84,6 +84,13 @@ def validate(config):
         value = performance.get(name, default)
         if not number(value) or not 0 <= value <= maximum:
             raise ValueError(f"Invalid performance.{name}")
+    if 'micro_control' in performance:
+        from micro_control import validate_plan
+        plan = validate_plan(performance['micro_control'])
+        if performance.get('text') or performance.get('tts_file') or performance.get('audio_file'):
+            raise ValueError('五项独立控制先使用无对白视频；语音嘴型请使用原有对话入口')
+        if plan['duration'] > (frames-1)/quality['fps'] + 1e-7:
+            raise ValueError('五项控制时间轴超过视频帧数')
     if config["generator"].get("id") != GENERATOR_ID or config["generator"].get("revision") != "v1":
         raise ValueError("Unsupported renderer identity")
 
@@ -122,7 +129,7 @@ def resolve(config):
     tools = tool_paths()
     identity = {
         "scripts": {name: sha256(PROJECT / name) for name in
-                    ("renderer.py", "render_settings.py", "speech.py", "behavior.py", "tools/create_head_scene.py")},
+                    ("renderer.py", "render_settings.py", "speech.py", "behavior.py", "micro_control.py", "tools/create_head_scene.py")},
         "tools": {name: {"path": tools[name], "size": Path(tools[name]).stat().st_size,
                          "mtime_ns": Path(tools[name]).stat().st_mtime_ns}
                   for name in ("blender", "ffmpeg", "ffprobe")},

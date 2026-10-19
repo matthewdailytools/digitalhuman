@@ -11,6 +11,7 @@ from mathutils import Vector
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from speech import MOUTH_SHAPES, load_bundle, viseme_weights
 from behavior import channels, EXPRESSIONS, MOTIONS, GAZES
+from micro_control import validate_plan, sample_plan
 
 
 def material(name, color, roughness=0.65):
@@ -122,7 +123,38 @@ def create_mouth(head, face, lip_material, interior_material):
     return objects, jaw
 
 
-def build_scene(width, height, frames, hair, fps=24, samples=16, camera_mode="fixed-half-body", speech=None, expression="neutral-with-blink", motion="idle-v1", strength=0.6, gaze="camera", enter=0.25, leave=0.25, skin_mode="simple"):
+def create_eyelid(eye, side, upper, mat):
+    """Skin shell closes over the eyeball; never squash the sclera or iris."""
+    rows, cols = 10, 32
+    def coordinates(closure):
+        limit = math.acos(0.94) + closure*(math.pi/2+0.015-math.acos(0.94))
+        points = []
+        for i in range(rows+1):
+            theta = limit*i/rows
+            if not upper:
+                theta = math.pi-theta
+            for j in range(cols+1):
+                phi = math.pi*j/cols
+                points.append((0.054*math.sin(theta)*math.cos(phi),
+                               -0.035*math.sin(theta)*math.sin(phi)-0.0005,
+                               0.026*math.cos(theta)))
+        return points
+    faces = [(i*(cols+1)+j, i*(cols+1)+j+1, (i+1)*(cols+1)+j+1, (i+1)*(cols+1)+j)
+             for i in range(rows) for j in range(cols)]
+    obj = mesh(f'Eyelid_{"Upper" if upper else "Lower"}_{side}', coordinates(0), faces, mat, eye)
+    obj.shape_key_add(name='Basis')
+    keys = []
+    # Intermediate shapes keep the lid on its curved path instead of cutting
+    # through the eyeball along a single linear shape-key chord.
+    for step in range(1,5):
+        key = obj.shape_key_add(name='Close' if step == 4 else f'Close{step*25}')
+        for vertex, co in zip(key.data, coordinates(step/4)):
+            vertex.co = co
+        keys.append(key)
+    return keys
+
+
+def build_scene(width, height, frames, hair, fps=24, samples=16, camera_mode="fixed-half-body", speech=None, expression="neutral-with-blink", motion="idle-v1", strength=0.6, gaze="camera", enter=0.25, leave=0.25, skin_mode="simple", micro_plan=None):
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete(use_global=False)
     skin = material("Skin_Draft", (0.56, 0.32, 0.22))
@@ -183,7 +215,7 @@ def build_scene(width, height, frames, hair, fps=24, samples=16, camera_mode="fi
     sphere("GestureSleeve", (0.07, 0, -0.16), (0.075, 0.09, 0.22), shirt, arm)
     sphere("GestureHand", (0.10, -0.01, -0.37), (0.055, 0.045, 0.075), skin, arm)
     eyes = []
-    brows, irises = [], []
+    brows, irises, eyelids = [], [], []
     for side in (-1, 1):
         eye = empty(f"EyeAperture_{side}", (side * 0.087, -0.182, 0.405))
         eye.parent = head
@@ -191,6 +223,7 @@ def build_scene(width, height, frames, hair, fps=24, samples=16, camera_mode="fi
         sphere(f"EyeWhite_{side}", (0, 0, 0), (0.052, 0.029, 0.024), white, eye)
         irises.append(sphere(f"Iris_{side}", (0, -0.028, 0), (0.016, 0.0035, 0.016), iris, eye))
         irises.append(sphere(f"Pupil_{side}", (0, -0.031, 0), (0.007, 0.0015, 0.007), pupil, eye))
+        eyelids.extend(create_eyelid(eye, side, upper, skin) for upper in (True, False))
         eyebrow = [(side * 0.087 + 0.052 * x / 10, -0.183,
                     0.452 + 0.009 * (1 - (x / 10) ** 2)) for x in range(-10, 11)]
         brows.append(curve(f"Eyebrow_{side}", eyebrow, 0.0045, dark, head))
@@ -256,6 +289,12 @@ def build_scene(width, height, frames, hair, fps=24, samples=16, camera_mode="fi
         time_seconds = (frame - 1) / fps
         duration = (frames - 1) / fps
         controls = channels(time_seconds, duration, expression, strength, motion, gaze, enter, leave)
+        micro = sample_plan(micro_plan, time_seconds) if micro_plan else None
+        if micro is not None:
+            controls = channels(time_seconds, duration, 'neutral-with-blink', 0, 'still', 'camera', enter, leave)
+            controls.update(blink=micro['eye_close'], smile=micro['smile'], pitch=micro['pitch'],
+                            gaze=micro['gaze_x']*0.012, gaze_y=micro['gaze_y']*0.009,
+                            mouth_open=micro['mouth_open'])
         head.rotation_euler = (controls['pitch'], 0, controls['turn'])
         head.keyframe_insert("rotation_euler", frame=frame)
         body.location.z = controls['breath']
@@ -266,6 +305,7 @@ def build_scene(width, height, frames, hair, fps=24, samples=16, camera_mode="fi
         hair_control.keyframe_insert("rotation_euler", frame=frame)
         for obj in irises:
             obj.location.x = controls['gaze']
+            obj.location.z = controls.get('gaze_y', 0)
             obj.keyframe_insert("location", frame=frame)
         for index, brow in enumerate(brows):
             brow.location.z = 0.018*controls['brow']
@@ -273,10 +313,16 @@ def build_scene(width, height, frames, hair, fps=24, samples=16, camera_mode="fi
             brow.keyframe_insert("location", frame=frame)
             brow.keyframe_insert("rotation_euler", frame=frame)
         for eye in eyes:
-            eye.scale.z = (1 + 0.25*controls['surprise'])*(1-controls['blink']*0.96)
+            eye.scale.z = 1 + 0.25*controls['surprise']
             eye.keyframe_insert("scale", frame=frame)
+        for lid in eyelids:
+            for step, key in enumerate(lid,1):
+                key.value = max(0, 1-abs(controls['blink']*4-step))
+                key.keyframe_insert('value', frame=frame)
         time_seconds = (frame - 1) / fps
         weights = viseme_weights(time_seconds, speech["events"]) if speech else {v: 0 for v in MOUTH_SHAPES if v != "REST"}
+        if micro is not None:
+            weights['A'] = micro['mouth_open']
         for obj in mouths:
             smile = obj.data.shape_keys.key_blocks['Smile']
             # Reduce corner lifting during large openings and rounded/closed phonemes.
@@ -291,6 +337,8 @@ def build_scene(width, height, frames, hair, fps=24, samples=16, camera_mode="fi
         mouth_timeline.append({"frame": frame, "time": time_seconds, "weights": weights, "jaw": jaw.value, "controls": controls})
     scene["asset_revision"] = "procedural-head-v1"
     scene["scope"] = "Technical mannequin; simplified eye aperture and mouth Shape Keys; not photoreal"
+    if micro_plan:
+        scene['micro_control_plan'] = json.dumps(micro_plan, ensure_ascii=False)
     scene["axes"] = "Z up; front -Y; units meters"
     scene.frame_set(1)
     # Open directly in the camera view using a low-cost solid viewport.
@@ -314,6 +362,7 @@ parser.add_argument("--hair", choices=["none", "static", "sway"], default="stati
 parser.add_argument("--render", choices=["still", "animation", "none"], default="still")
 parser.add_argument("--camera", choices=["fixed-half-body", "head-closeup"], default="fixed-half-body")
 parser.add_argument("--tts-file")
+parser.add_argument("--plan-file")
 parser.add_argument("--expression", choices=EXPRESSIONS, default="neutral-with-blink")
 parser.add_argument("--motion", choices=MOTIONS, default="idle-v1")
 parser.add_argument("--gaze", choices=GAZES, default="camera")
@@ -328,9 +377,12 @@ if args.width <= 0 or args.height <= 0 or args.frames < 2 or args.fps < 1 or arg
 output = Path(args.output).resolve()
 output.mkdir(parents=True, exist_ok=True)
 speech = load_bundle(args.tts_file) if args.tts_file else None
+micro_plan = validate_plan(json.loads(Path(args.plan_file).read_text('utf-8-sig'))) if args.plan_file else None
+if micro_plan and (speech or micro_plan['duration'] > (args.frames-1)/args.fps+1e-7):
+    raise ValueError('Independent control plan must fit the silent scene timeline')
 if speech and speech["duration_seconds"] > args.frames / args.fps:
     raise ValueError("Speech exceeds scene timeline")
-scene, mouth_timeline = build_scene(args.width, args.height, args.frames, args.hair, args.fps, args.samples, args.camera, speech, args.expression, args.motion, args.strength, args.gaze, args.enter, args.leave, args.skin)
+scene, mouth_timeline = build_scene(args.width, args.height, args.frames, args.hair, args.fps, args.samples, args.camera, speech, args.expression, args.motion, args.strength, args.gaze, args.enter, args.leave, args.skin, micro_plan)
 if args.render == "still":
     if not 1 <= args.still_frame <= args.frames:
         raise ValueError("still-frame outside scene timeline")
@@ -354,6 +406,7 @@ report = {
     "scope": scene["scope"],
     "speech_source": speech.get("source") if speech else None,
     "mouth_shapes": list(MOUTH_SHAPES), "camera": args.camera,
+    "micro_control": micro_plan,
 }
 if args.render == "animation":
     files = list(output.glob("frame_*.png"))

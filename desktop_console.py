@@ -15,6 +15,7 @@ from render_settings import tool_paths
 from playback import ResponseGate
 from quality_profiles import PROFILES
 from behavior import EXPRESSIONS, MOTIONS, GAZES
+from micro_control import manual_plan, describe
 
 
 class Player:
@@ -101,9 +102,12 @@ class Console:
         left = ttk.Frame(tabs, padding=8)
         advanced = ttk.Frame(tabs, padding=8)
         ai = ttk.Frame(tabs, padding=8)
+        micro = ttk.Frame(tabs, padding=8)
         tabs.add(left, text="渲染")
         tabs.add(advanced, text="表情 / 动作")
+        tabs.add(micro, text="五项控制")
         tabs.add(ai, text="AI / 验收")
+        self.tabs, self.micro_tab = tabs, micro
         right = ttk.Frame(main)
         right.grid(row=0, column=1, sticky="nsew")
         self.widgets = []
@@ -166,6 +170,43 @@ class Console:
         self.button(ai, "对话 → 生成并播放", lambda: self.prepare_text(True, True))
         ttk.Button(ai, text="清空会话上下文", command=lambda: self.context.clear()).pack(fill='x', pady=3)
         ttk.Label(ai, text="mock 为固定模拟回复；语音为系统 SAPI，嘴型按音量近似，非音素对齐。ASR 尚未接入。", wraplength=255).pack(anchor="w", pady=6)
+        ttk.Label(micro, text='五项独立控制 · 无对白缓存视频', wraplength=255).pack(anchor='w')
+        self.micro_vars = {name: tk.StringVar(root, '0') for name in ('eye_close','smile','mouth_open','nod')}
+        grid = ttk.Frame(micro)
+        grid.pack(fill='x', pady=5)
+        for i, (name, label) in enumerate((('eye_close','闭眼'),('smile','微笑'),('mouth_open','张嘴'),('nod','点头'))):
+            cell = ttk.Frame(grid)
+            cell.grid(row=i//2, column=i%2, sticky='ew', padx=(0,8), pady=3)
+            grid.columnconfigure(i%2, weight=1)
+            ttk.Label(cell, text=label+' 0—1').pack(anchor='w')
+            entry = ttk.Spinbox(cell, from_=0, to=1, increment=0.1, textvariable=self.micro_vars[name], width=10)
+            entry.pack(fill='x')
+            self.widgets.append((entry,'normal'))
+        self.micro_gaze = tk.StringVar(root,'看镜头')
+        self.gaze_values = {'看镜头':[0,0],'画面左':[-1,0],'画面右':[1,0],'向上':[0,1],'向下':[0,-1]}
+        ttk.Label(micro, text='注视方向').pack(anchor='w')
+        entry = ttk.Combobox(micro, textvariable=self.micro_gaze, values=list(self.gaze_values), state='readonly')
+        entry.pack(fill='x', pady=3)
+        self.widgets.append((entry,'readonly'))
+        self.micro_duration = tk.StringVar(root,'3')
+        row = ttk.Frame(micro)
+        row.pack(fill='x', pady=3)
+        ttk.Label(row,text='手动时长（1—15秒）').pack(side='left')
+        entry = ttk.Spinbox(row, from_=1, to=15, increment=0.5, textvariable=self.micro_duration, width=6)
+        entry.pack(side='right')
+        self.widgets.append((entry,'normal'))
+        self.button(micro, '手动控制 → 生成并播放', lambda:self.prepare_micro(False), primary=True)
+        ttk.Separator(micro).pack(fill='x',pady=7)
+        ttk.Label(micro,text='AI动作指令（时长写在指令中）').pack(anchor='w')
+        self.motion_prompt = tk.Text(micro,width=27,height=4,font=('Microsoft YaHei UI',10),wrap='word')
+        self.motion_prompt.pack(fill='x',pady=4)
+        self.motion_prompt.insert('1.0','用5秒依次闭眼、看向画面左、微笑、张嘴，最后轻轻点头。')
+        self.widgets.append((self.motion_prompt,'normal'))
+        entry=ttk.Combobox(micro,textvariable=self.provider,values=['mock','deepseek'],state='readonly')
+        entry.pack(fill='x',pady=3)
+        self.widgets.append((entry,'readonly'))
+        ttk.Label(micro,text='mock仅固定演示，不理解指令。\nDeepSeek模型和密钥在“AI / 验收”设置。\n分辨率、采样和镜头沿用“渲染”页。',wraplength=255).pack(anchor='w',pady=3)
+        self.button(micro,'AI 指令 → 生成并播放',lambda:self.prepare_micro(True),primary=True)
         tools = ttk.Frame(right)
         tools.pack(fill="x", pady=(0, 8))
         self.badge = ttk.Label(tools, text="检查缓存…", font=("Microsoft YaHei UI", 11, "bold"))
@@ -199,7 +240,17 @@ class Console:
         ttk.Label(right, textvariable=self.status, wraplength=650).pack(anchor="w", pady=(14, 6))
         self.progress = ttk.Progressbar(right, maximum=100)
         self.progress.pack(fill="x", pady=(0, 10))
-        self.log = tk.Text(right, height=8, wrap="word", font=("Consolas", 9), bg="#e7ede6", fg="#304938", relief="flat", padx=12, pady=10)
+        self.result_tabs = ttk.Notebook(right)
+        self.result_tabs.pack(fill='both',expand=True)
+        log_page, plan_page = ttk.Frame(self.result_tabs), ttk.Frame(self.result_tabs)
+        self.result_tabs.add(log_page,text='任务日志')
+        self.result_tabs.add(plan_page,text='五项控制计划')
+        self.plan_page = plan_page
+        self.plan_view = tk.Text(plan_page,height=8,wrap='word',font=('Consolas',9),bg='#e7ede6',fg='#304938',relief='flat',padx=12,pady=10)
+        self.plan_view.pack(fill='both',expand=True)
+        self.plan_view.insert('end','生成五项控制后，可查看实际执行的动作时间轴和JSON。')
+        self.plan_view.configure(state='disabled')
+        self.log = tk.Text(log_page, height=8, wrap="word", font=("Consolas", 9), bg="#e7ede6", fg="#304938", relief="flat", padx=12, pady=10)
         self.log.pack(fill="both", expand=True)
         self.log.insert("end", "等待任务。\n模拟时间戳用于测试，不代表真实中文音素对齐精度。")
         self.log.configure(state="disabled")
@@ -219,7 +270,8 @@ class Console:
         names = [entry["name"] for entry in self.presets]
         self.preset_widget.configure(values=names)
         current = self.variables["preset"].get()
-        self.variables["preset"].set(current if current in names else ('自定义台词 / AI 回复' if '自定义台词 / AI 回复' in names else names[0]))
+        preferred = '五项控制 / 最近结果' if '五项控制 / 最近结果' in names else ('自定义台词 / AI 回复' if '自定义台词 / AI 回复' in names else names[0])
+        self.variables["preset"].set(current if current in names else preferred)
 
     def changed(self, key):
         if self.suppress:
@@ -328,6 +380,8 @@ class Console:
                 self.status.set(error)
                 continue
             self.summary = summary
+            if summary.get('micro_control'):
+                self.show_plan(summary['micro_control'])
             self.badge.configure(text="缓存已就绪" if summary["hit"] else "当前配置尚未生成")
             self.play_button.configure(state="normal" if summary["hit"] else "disabled")
             if image:
@@ -383,6 +437,23 @@ class Console:
                         self.reload_presets()
                         self.variables['preset'].set('自定义台词 / AI 回复')
                         self.status.set('语音准备完成，请点击生成视频。嘴型为音量近似测试。')
+                    elif job['kind'] == 'micro':
+                        may_play = self.gate.accepts(self.reel_token)
+                        output = Path(job['output_dir'])
+                        result = json.loads((output/'result.json').read_text('utf-8'))
+                        self.reload_presets()
+                        self.variables['preset'].set('五项控制 / 最近结果')
+                        self.show_plan(result['plan'])
+                        self.result_tabs.select(self.plan_page)
+                        if may_play:
+                            answer = json.loads((output/'answer.json').read_text('utf-8'))
+                            verified = cache_status(answer['config'])
+                            if not verified['hit']:
+                                raise ValueError('五项控制缓存丢失或损坏')
+                            self.player.play(verified['media_path'],False)
+                            self.status.set(f"五项控制已播放；来源：{result['source']}；视频缓存命中：{result['video_hit']}")
+                        else:
+                            self.status.set('五项控制已缓存；停止后的任务不会自动播放。')
                     elif job["kind"] == "reel":
                         result=json.loads((Path(job['output_dir'])/'reel.json').read_text('utf-8'))
                         self.reel_media=result['media_path']
@@ -422,6 +493,33 @@ class Console:
             os.environ['DEEPSEEK_API_KEY']=value
         self.secret.set('')
         self.status.set('会话密钥已设置；关闭程序后失效，不写入日志或仓库。' if value else '未输入新密钥；可使用启动环境中的 DEEPSEEK_API_KEY。')
+
+    def show_plan(self, plan):
+        self.plan_view.configure(state='normal')
+        self.plan_view.delete('1.0','end')
+        self.plan_view.insert('end',describe(plan)+'\n\n'+json.dumps(plan,ensure_ascii=False,indent=2))
+        self.plan_view.configure(state='disabled')
+
+    def prepare_micro(self, ai):
+        if self.busy:
+            return
+        try:
+            # Quality only: do not inherit the previous preset's audio or performance.
+            settings = self.payload()['settings']
+            quality = {k:v for k,v in settings.items() if k in ('profile','width','height','fps','samples','hair','camera')}
+            request = dict(mode='ai' if ai else 'manual',quality=quality)
+            if ai:
+                request.update(instruction=self.motion_prompt.get('1.0','end').strip(),provider=self.provider.get(),model=self.model.get())
+            else:
+                values = {k:float(v.get()) for k,v in self.micro_vars.items()}
+                duration = float(self.micro_duration.get())
+                gaze = self.gaze_values[self.micro_gaze.get()]
+                plan = manual_plan(values,gaze,duration)
+                self.show_plan(plan)
+                request.update(controls=values,gaze=gaze,duration=duration)
+            self.start('micro',request=request)
+        except (ValueError, KeyError) as error:
+            self.status.set('五项控制参数无效：'+str(error))
 
     def prepare_text(self, dialogue, autoplay=False):
         if self.busy:

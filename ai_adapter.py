@@ -11,7 +11,7 @@ SYSTEM = ('你是数字人助手。用简短中文回答，最多60个汉字。�
           'JSON示例：{"text":"你好，很高兴见到你。","expression":"smile","motion":"nod"}')
 
 
-def parse_reply(raw):
+def completion_content(raw):
     """Distinguish transport/schema failures from model JSON failures without echoing secrets."""
     try:
         data = json.loads(raw)
@@ -36,6 +36,11 @@ def parse_reply(raw):
     lines = content.splitlines()
     if len(lines) >= 3 and lines[0].lower() in ('```json', '```') and lines[-1] == '```':
         content = '\n'.join(lines[1:-1]).strip()
+    return content, data
+
+
+def parse_reply(raw):
+    content, data = completion_content(raw)
     try:
         result = json.loads(content)
     except json.JSONDecodeError:
@@ -55,6 +60,30 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
+def request_deepseek(messages, model, max_tokens=1024):
+    """One authenticated request. Shared by chat and strict action planning; never auto-retry."""
+    secret = os.environ.get('DEEPSEEK_API_KEY', '').strip()
+    if not secret:
+        raise ValueError('缺少 DEEPSEEK_API_KEY，请在桌面控制台设置会话密钥')
+    if len(secret)>1024 or any(not 33<=ord(c)<=126 for c in secret):
+        raise ValueError('密钥格式无效，请勿包含空白、换行或非 ASCII 字符')
+    body = dict(model=model, messages=messages, temperature=0.2, max_tokens=max_tokens, stream=False,
+                response_format={'type': 'text'}, thinking={'type':'disabled'})
+    req = Request('https://api.deepseek.com/chat/completions', data=json.dumps(body).encode(),
+                  headers={'Authorization': 'Bearer '+secret, 'Content-Type': 'application/json'})
+    try:
+        with build_opener(NoRedirect()).open(req, timeout=60) as response:
+            raw = response.read(1_000_001)
+            if len(raw) > 1_000_000:
+                raise ValueError('API response too large')
+            return raw
+    except HTTPError as error:
+        labels = {401:'密钥无效',402:'余额不足',429:'请求限流',400:'参数或模型不受支持'}
+        raise ValueError(f'DeepSeek HTTP {error.code}: {labels.get(error.code, "服务请求失败")}；未自动重试') from None
+    except (URLError, TimeoutError, OSError):
+        raise ValueError('DeepSeek 网络失败或超时；为避免重复计费未自动重试') from None
+
+
 def chat(prompt, root, provider='mock', model=None, context=None, revision=None):
     if provider not in ('mock', 'deepseek') or not isinstance(prompt, str) or not 1 <= len(prompt.strip()) <= 2000:
         raise ValueError('请选择有效提供商并输入1—2000字问题')
@@ -72,28 +101,7 @@ def chat(prompt, root, provider='mock', model=None, context=None, revision=None)
         if provider == 'mock':
             result = dict(text='你好，我正在测试数字人的表情、嘴型和动作。', expression='smile', motion='explain', usage=None, source='mock-not-ai')
         else:
-            secret = os.environ.get('DEEPSEEK_API_KEY', '').strip()
-            if not secret:
-                raise ValueError('缺少 DEEPSEEK_API_KEY，请在桌面控制台设置会话密钥')
-            if len(secret)>1024 or any(not 33<=ord(c)<=126 for c in secret):
-                raise ValueError('密钥格式无效，请勿包含空白、换行或非 ASCII 字符')
-            # JSON mode can return an empty completion. Request normal text with
-            # the explicit JSON prompt instead; still strictly validate the result.
-            body = dict(model=model, messages=messages, temperature=0.2, max_tokens=1024, stream=False,
-                        response_format={'type': 'text'}, thinking={'type':'disabled'})
-            req = Request('https://api.deepseek.com/chat/completions', data=json.dumps(body).encode(),
-                          headers={'Authorization': 'Bearer '+secret, 'Content-Type': 'application/json'})
-            try:
-                with build_opener(NoRedirect()).open(req, timeout=60) as response:
-                    raw = response.read(1_000_001)
-                    if len(raw) > 1_000_000:
-                        raise ValueError('API response too large')
-                result = parse_reply(raw)
-            except HTTPError as error:
-                labels = {401:'密钥无效',402:'余额不足',429:'请求限流',400:'参数或模型不受支持'}
-                raise ValueError(f'DeepSeek HTTP {error.code}: {labels.get(error.code, "服务请求失败")}；未自动重试') from None
-            except (URLError, TimeoutError, OSError):
-                raise ValueError('DeepSeek 网络失败或超时；为避免重复计费未自动重试') from None
+            result = parse_reply(request_deepseek(messages, model))
         validate_response(result)
         (folder/'response.json').write_text(json.dumps(result, ensure_ascii=False), 'utf-8')
     folder, hit = cached_layer(root, identity, produce)
