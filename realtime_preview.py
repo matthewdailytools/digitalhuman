@@ -36,6 +36,29 @@ def atomic_json(path,value):
         temporary.unlink(missing_ok=True)
 
 
+def read_json(path):
+    """A missed IPC read is retried next tick, not a fatal Blender error."""
+    try:return json.loads(Path(path).read_text('utf-8'))
+    except (FileNotFoundError,PermissionError,json.JSONDecodeError):return None
+
+
+def try_atomic_json(path,value):
+    try:atomic_json(path,value);return True
+    except PermissionError:return False
+
+
+class HeartbeatWatch:
+    """Monotonic lease; re-reading an unchanged stale file never renews it."""
+    def __init__(self,now,timeout=45):
+        self.last_seen=now;self.last_stamp=None;self.timeout=timeout
+
+    def alive(self,message,now):
+        stamp=message.get('time') if isinstance(message,dict) else None
+        if type(stamp) in (int,float) and math.isfinite(stamp) and stamp!=self.last_stamp:
+            self.last_stamp=stamp;self.last_seen=now
+        return now-self.last_seen<=self.timeout
+
+
 class RealtimePreview:
     def __init__(self,root=None):
         self.root=Path(root or PROJECT/'work/realtime');self.lock=threading.RLock()
@@ -92,12 +115,10 @@ class RealtimePreview:
                 self.phase='stopped'
             if self.session and self.phase in ('loading','running'):
                 if time.monotonic()-self.last_heartbeat>2:
-                    atomic_json(self.session/'heartbeat.json',dict(time=time.time()));self.last_heartbeat=time.monotonic()
-                try:
-                    state=json.loads((self.session/'status.json').read_text('utf-8'))
-                    if state.get('phase')=='failed':self.phase='failed';self.error=state.get('error','实时窗口失败')
-                    elif state.get('phase')=='ready':self.phase='running'
-                except (FileNotFoundError,json.JSONDecodeError,PermissionError):state={}
+                    if try_atomic_json(self.session/'heartbeat.json',dict(time=time.time())):self.last_heartbeat=time.monotonic()
+                state=read_json(self.session/'status.json') or {}
+                if state.get('phase')=='failed':self.phase='failed';self.error=state.get('error','实时窗口失败')
+                elif state.get('phase')=='ready':self.phase='running'
             else:state={}
             return dict(state,phase=self.phase,error=self.error,session=str(self.session) if self.session else None,
                         pid=self.process.pid if self.process else None)

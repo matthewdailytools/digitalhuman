@@ -44,9 +44,40 @@ def main():
             state['capture']=str(image)
         checks.append(state);print('REALTIME ACCEPTED',mode,controls,flush=True)
         return state
+    def lock_file(path):
+        # Filesystem fault injection, not desktop input automation. Windows share=0
+        # reproduces the exact PermissionError seen in the user's heartbeat log.
+        import ctypes
+        from ctypes import wintypes
+        kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+        kernel.CreateFileW.argtypes=[wintypes.LPCWSTR,wintypes.DWORD,wintypes.DWORD,wintypes.LPVOID,
+                                    wintypes.DWORD,wintypes.DWORD,wintypes.HANDLE]
+        kernel.CreateFileW.restype=wintypes.HANDLE
+        kernel.CloseHandle.argtypes=[wintypes.HANDLE];kernel.CloseHandle.restype=wintypes.BOOL
+        end=time.monotonic()+2
+        while True:
+            handle=kernel.CreateFileW(str(path),0x80000000,0,None,3,0x80,None)
+            if handle!=ctypes.c_void_p(-1).value:return kernel,handle
+            if time.monotonic()>end:raise ctypes.WinError(ctypes.get_last_error())
+            time.sleep(.01)
     try:
         live.start();first=wait(lambda s:s['phase']=='running',120);pid=first['pid']
         print('REALTIME READY',first,flush=True)
+        lock_checks=[]
+        for name in ('heartbeat.json','status.json'):
+            kernel,handle=lock_file(live.session/name)
+            try:
+                seq=live.publish(dict(dict.fromkeys(CHANNELS,0),smile=.6))
+                until=time.monotonic()+1.5
+                while time.monotonic()<until:
+                    state=live.snapshot()
+                    assert state['phase']=='running' and state['pid']==pid,state
+                    time.sleep(.05)
+            finally:kernel.CloseHandle(handle)
+            state=wait(lambda s:s.get('seq')==seq and abs(s['controls']['smile']-.6)<.001)
+            assert not (live.session/'error.log').exists()
+            lock_checks.append(dict(file=name,exclusive_lock_seconds=1.5,recovered=True,pid=pid))
+            print('REALTIME LOCK RECOVERY',name,flush=True)
         send({})
         send(dict(smile=.85,mouth_open=.6),capture=True)
         send(dict(eye_close=1,smile=1,nod=.5,gaze_x=-.8,gaze_y=.4),capture=True)
@@ -74,6 +105,7 @@ def main():
         report=dict(success=True,persistent_pid=pid,session=str(live.session),checks=checks,
                     solid_moving_draw_fps=moving.get('viewport_draw_fps'),gpu=moving.get('gpu'),
                     realtime_smile_sample_peaks=peaks,
+                    exclusive_file_lock_recovery=lock_checks,
                     no_offline_render_jobs=True,measurement='Draw callback rate; not GPU profiling or phone performance')
         (OUTPUT/'report.json').write_text(json.dumps(report,indent=2),'utf-8')
     finally:

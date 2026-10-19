@@ -12,7 +12,7 @@ import bpy
 from mathutils import Vector
 
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
-from realtime_preview import CHANNELS,validate_state,atomic_json
+from realtime_preview import CHANNELS,validate_state,atomic_json,read_json,try_atomic_json,HeartbeatWatch
 from micro_control import sample_plan
 from smile_sample import smile_plan
 
@@ -68,6 +68,7 @@ if not views:raise RuntimeError('No native 3D viewport available')
 target_state=dict.fromkeys(CHANNELS,0.0);current=target_state.copy()
 last_seq=0;last_tick=time.perf_counter();last_status=0;sample_started=None;mode=None;capture_seq=None;capture_after=0
 draw_times=deque(maxlen=120);apply_delay_ms=0;settled_ms=0;sent_at=0;active=False;ready_at=time.time()
+heartbeat_watch=HeartbeatWatch(time.perf_counter())
 
 def draw():
     if bpy.context.area!=views[0][0]:return
@@ -80,10 +81,8 @@ def tick():
     now=time.perf_counter();dt=min(.25,max(0,now-last_tick));last_tick=now
     try:
         if (folder/'stop.json').exists():bpy.ops.wm.quit_blender();return None
-        heartbeat=json.loads((folder/'heartbeat.json').read_text('utf-8'))
-        if time.time()-heartbeat['time']>45:bpy.ops.wm.quit_blender();return None
-        try:command=json.loads((folder/'command.json').read_text('utf-8'))
-        except (FileNotFoundError,json.JSONDecodeError,PermissionError):command=None
+        if not heartbeat_watch.alive(read_json(folder/'heartbeat.json'),now):bpy.ops.wm.quit_blender();return None
+        command=read_json(folder/'command.json')
         new=False
         if command and command['seq']>last_seq:
             target_state=validate_state(command['controls']);last_seq=command['seq'];new=True
@@ -135,7 +134,7 @@ def tick():
             import gpu
             intervals=[b-a for a,b in zip(draw_times,list(draw_times)[1:]) if 0<b-a<1]
             keys=bpy.data.objects['Head'].data.shape_keys.key_blocks
-            atomic_json(folder/'status.json',dict(phase='ready',pid=__import__('os').getpid(),seq=last_seq,mode=mode,
+            written=try_atomic_json(folder/'status.json',dict(phase='ready',pid=__import__('os').getpid(),seq=last_seq,mode=mode,
                         controls={k:rig[k] for k in CHANNELS},target=target_state,
                         shape_values={k:keys[k].value for k in ('EyeClose','SmileCorners','SmileCheeks','SmileLids','SmileOpenCorrective')},
                         jaw_angle=rig.pose.bones['Jaw'].rotation_euler.x,active=active,
@@ -146,7 +145,7 @@ def tick():
                         apply_delay_ms=apply_delay_ms,settled_ms=settled_ms,
                         viewport_draw_fps=(len(intervals)/sum(intervals) if intervals else 0),draw_count=len(draw_times),
                         gpu=gpu.platform.renderer_get(),ready_at=ready_at))
-            last_status=now
+            if written:last_status=now
         return 1/30
     except Exception:
         error=traceback.format_exc();(folder/'error.log').write_text(error,'utf-8')

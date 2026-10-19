@@ -7,10 +7,35 @@ import unittest
 from unittest.mock import Mock,patch
 
 from desktop_console import Console
-from realtime_preview import CHANNELS,RealtimePreview,atomic_json,validate_state
+from realtime_preview import CHANNELS,RealtimePreview,atomic_json,validate_state,read_json,try_atomic_json,HeartbeatWatch
 
 
 class RealtimeTests(unittest.TestCase):
+    def test_heartbeat_lock_keeps_lease_but_unchanged_file_expires(self):
+        watch=HeartbeatWatch(0)
+        self.assertTrue(watch.alive({'time':100},1))
+        self.assertTrue(watch.alive(None,20))
+        self.assertTrue(watch.alive({'time':101},30))
+        self.assertTrue(watch.alive({'time':101},74))
+        self.assertFalse(watch.alive({'time':101},76))
+        self.assertFalse(watch.alive({'time':float('nan')},77))
+
+    def test_transient_read_and_status_write_failures_are_nonfatal(self):
+        for error in (PermissionError(),FileNotFoundError(),json.JSONDecodeError('locked','',0)):
+            with patch.object(Path,'read_text',side_effect=error):self.assertIsNone(read_json('heartbeat.json'))
+        with patch('realtime_preview.atomic_json',side_effect=PermissionError()):
+            self.assertFalse(try_atomic_json('status.json',{'phase':'ready'}))
+        with patch('realtime_preview.atomic_json',side_effect=OSError('disk full')):
+            with self.assertRaises(OSError):try_atomic_json('status.json',{})
+
+    def test_console_survives_heartbeat_write_contention(self):
+        with tempfile.TemporaryDirectory() as folder:
+            live=RealtimePreview(folder);live.session=Path(folder);live.phase='running'
+            atomic_json(live.session/'status.json',{'phase':'ready','seq':7})
+            with patch('realtime_preview.try_atomic_json',return_value=False):
+                self.assertEqual(live.snapshot()['seq'],7)
+                self.assertEqual(live.phase,'running');self.assertEqual(live.last_heartbeat,0)
+
     def test_invalid_controls_never_enter_ipc(self):
         base=dict.fromkeys(CHANNELS,0)
         for name,value in (('smile',float('nan')),('eye_close',True),('nod',-1),('gaze_x',1.1)):
