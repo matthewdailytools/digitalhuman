@@ -69,6 +69,43 @@ def smile_delta(point):
             -.08*corner*front,(.55*corner+.25*cheek)*front)
 
 
+def smile_corner_delta(point):
+    """Local lip-corner pull, in scan centimetres; not a muscle simulation."""
+    x,y,z=point
+    if y>=-7 or not 20<z<27:return (0,0,0)
+    falloff=math.exp(-((abs(x)-2.35)/1.25)**2-((z-23.8)/1.35)**2)
+    falloff*=(1-smooth(-11,-7,y))*smooth(.2,1.3,abs(x))
+    return ((1 if x>0 else -1)*.38*falloff,-.06*falloff,.53*falloff)
+
+
+def smile_cheek_delta(point):
+    """Lift and modest forward bulge, excluding the eyelid and lip seam."""
+    x,y,z=point
+    if y>=-6 or not 24<z<29.3:return (0,0,0)
+    falloff=math.exp(-((abs(x)-3.8)/1.6)**2-((z-26.7)/1.65)**2)
+    falloff*=smooth(24,25.4,z)*(1-smooth(28,29.3,z))*(1-smooth(-10.8,-6,y))
+    return ((1 if x>0 else -1)*.10*falloff,-.16*falloff,.34*falloff)
+
+
+def smile_lid_delta(point,centers):
+    """A mild partial blink, gated out during explicit closure by the rig driver.
+
+    Reusing the closure field keeps skin, lashes and the wetline in agreement.
+    This is a fixed friendly-smile style, not a universal emotional rule.
+    """
+    return tuple(.16*v for v in blink_delta(point,centers))
+
+
+def smile_open_delta(point):
+    """Counter excessive transverse lip-corner pull at open-jaw combinations.
+
+    Applied before skinning, weighted by smile*mouth_open. It does not alter
+    the central lip seam or cancel the smile's upward component.
+    """
+    dx,dy,dz=smile_corner_delta(point)
+    return (-.48*dx,-.35*dy,-.16*dz)
+
+
 def hairline(x,y):
     front=smooth(-1,-9,y)
     return 28.0+7.0*front+.012*x*x*front+.10*math.sin(3.1*x+.7*y)+.06*math.sin(6.2*x)

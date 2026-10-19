@@ -13,7 +13,7 @@ from layer_cache import key_lock
 
 def prepare(request, output):
     allowed = {'mode', 'controls', 'gaze', 'duration', 'instruction', 'provider', 'model', 'quality', 'character'}
-    if not isinstance(request, dict) or set(request)-allowed or request.get('mode') not in ('manual', 'ai'):
+    if not isinstance(request, dict) or set(request)-allowed or request.get('mode') not in ('manual', 'ai', 'smile-sample'):
         raise ValueError('无效的五项控制请求')
     # Reject unsupported render settings before any potentially billable AI request.
     quality = request.get('quality', {})
@@ -21,6 +21,7 @@ def prepare(request, output):
         raise ValueError('无效的五项控制画质参数')
     character=request.get('character','procedural-head')
     if character not in ('procedural-head','scanned-head'):raise ValueError('未知五项控制角色')
+    if request['mode']=='smile-sample' and character!='scanned-head':raise ValueError('微笑样板仅支持写实扫描头部')
     if character=='scanned-head':
         from scanned_settings import base_config,resolve as resolve_scan
         config=base_config(quality)
@@ -34,7 +35,10 @@ def prepare(request, output):
         validate(config)
         resolver=resolve
     status = {'mode': request['mode'], 'plan_hit': None}
-    if request['mode'] == 'manual':
+    if request['mode']=='smile-sample':
+        from smile_sample import smile_plan
+        plan=smile_plan();status['source']='smile-deformation-sample'
+    elif request['mode'] == 'manual':
         plan = manual_plan(request.get('controls'), request.get('gaze'), request.get('duration'))
         status['source'] = 'manual-controls'
     else:

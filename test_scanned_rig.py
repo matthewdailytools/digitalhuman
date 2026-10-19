@@ -7,12 +7,53 @@ from unittest.mock import Mock,patch
 
 from cache_pipeline import cache_key
 from micro_pipeline import prepare
-from scan_binding import jaw_weights,blink_delta,hairline
+from scan_binding import (jaw_weights,blink_delta,hairline,smile_corner_delta,
+                          smile_cheek_delta,smile_lid_delta,smile_open_delta)
 from scanned_settings import base_config,validate
 from desktop_console import Console
 
 
 class ScannedBindingTests(unittest.TestCase):
+    def test_smile_regions_preserve_seam_and_unrelated_anatomy(self):
+        for p in ((0,-13,23.8),(0,2,24),(0,-9,38),(0,-3,12)):
+            self.assertEqual(smile_corner_delta(p),(0,0,0))
+            self.assertEqual(smile_open_delta(p),(0,0,0))
+        self.assertGreater(smile_cheek_delta((3.8,-11,26.7))[2],.25)
+        self.assertEqual(smile_cheek_delta((3,-11.5,29.8)),(0,0,0))
+        positive=smile_corner_delta((2.35,-12,23.8));negative=smile_corner_delta((-2.35,-12,23.8))
+        self.assertAlmostEqual(positive[0],-negative[0]);self.assertEqual(positive[1:],negative[1:])
+
+    def test_open_corrective_limits_width_without_erasing_smile_lift(self):
+        base=smile_corner_delta((2.35,-12,23.8));fix=smile_open_delta((2.35,-12,23.8))
+        self.assertGreater(base[0]+fix[0],0);self.assertLess(base[0]+fix[0],base[0])
+        self.assertGreater(base[2]+fix[2],.3)
+        eyes=[[3,-9.8,29.8],[-3,-9.8,29.8]]
+        self.assertGreater(smile_lid_delta((3,-11.5,29.37),eyes)[2],.02)
+
+    def test_smile_sample_timeline_and_native_dispatch(self):
+        from smile_sample import smile_plan
+        from micro_control import sample_plan
+        plan=smile_plan()
+        self.assertEqual(sample_plan(plan,0)['smile'],0)
+        self.assertEqual(sample_plan(plan,6)['smile'],0)
+        self.assertAlmostEqual(sample_plan(plan,1)['smile'],.35)
+        self.assertAlmostEqual(sample_plan(plan,2.5)['smile'],.9)
+        self.assertAlmostEqual(sample_plan(plan,4.25)['mouth_open'],.65)
+        self.assertEqual(sample_plan(plan,5.125)['eye_close'],1)
+        c=Console.__new__(Console);c.busy=False;c.payload=Mock(return_value={'settings':{'fps':8,'text':'stale'}})
+        c.micro_character=Mock();c.show_plan=Mock();c.start=Mock();c.status=Mock()
+        Console.prepare_smile_sample(c)
+        self.assertEqual(c.start.call_args.kwargs['request'],dict(mode='smile-sample',character='scanned-head',quality={'fps':8}))
+
+    def test_sample_requires_scan_and_never_requests_ai(self):
+        with tempfile.TemporaryDirectory() as temporary,patch('micro_pipeline.plan_actions') as ai:
+            with self.assertRaises(ValueError):prepare(dict(mode='smile-sample'),temporary)
+            with patch('scanned_settings.resolve',side_effect=lambda c:c):
+                config,status=prepare(dict(mode='smile-sample',character='scanned-head'),temporary)
+            self.assertEqual(status['source'],'smile-deformation-sample')
+            self.assertEqual(config['performance']['micro_control']['duration'],6)
+            ai.assert_not_called()
+
     def test_nearly_coincident_lips_use_mesh_paths_not_height(self):
         # The upper and lower seam have reversed heights but separate topology paths.
         p=[(0,-13,24),(0,-13,23.5),(3,-12,23.6),(0,-13,23.3),(0,-13,23.6)]

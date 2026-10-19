@@ -28,6 +28,12 @@ if 'micro_control_plan' in scene:
             assert abs(rig[channel]-expected[channel])<1e-5,(frame,channel,rig[channel],expected[channel])
             peaks[channel]=max(peaks[channel],abs(rig[channel]))
         assert abs(head.data.shape_keys.key_blocks['EyeClose'].value-expected['eye_close'])<1e-5
+        keys=head.data.shape_keys.key_blocks
+        if 'SmileCorners' in keys:
+            for name,value in (('SmileCorners',expected['smile']),('SmileCheeks',expected['smile']),
+                               ('SmileLids',expected['smile']*(1-expected['eye_close'])),
+                               ('SmileOpenCorrective',expected['smile']*expected['mouth_open'])):
+                assert abs(keys[name].value-value)<1e-5,(frame,name,value)
         assert abs(rig.pose.bones['Jaw'].rotation_euler.x-.26*expected['mouth_open'])<1e-5
         clip_checks+=1
     rig.animation_data.action=None
@@ -57,8 +63,10 @@ set_pose(mouth_open=1);opened=positions(ids)
 gap_before=abs(neutral[0].z-neutral[1].z);gap_after=abs(opened[0].z-opened[1].z)
 assert gap_after-gap_before>1.5,('Lip did not open',gap_before,gap_after)
 assert (opened[0]-neutral[0]).length<.001,'Upper lip incorrectly assigned to jaw'
-set_pose(smile=1);smile=positions(ids)
-assert (smile[2]-neutral[2]).length>.02,'Smile did not deform upper lip'
+corner_id=min(range(len(head.data.vertices)),key=lambda i:(head.data.vertices[i].co-Vector((2.35,-12.5,23.8))).length)
+set_pose();corner_neutral=positions([corner_id])[0]
+set_pose(smile=1);corner_smile=positions([corner_id])[0]
+assert corner_smile.z-corner_neutral.z>.2,'Smile did not lift mouth corner'
 set_pose(gaze_x=1,gaze_y=1)
 assert abs(bpy.data.objects['EyePivot_Left'].rotation_euler.z-.24)<1e-5
 assert abs(bpy.data.objects['EyePivot_Right'].rotation_euler.x+.16)<1e-5

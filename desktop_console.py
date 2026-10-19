@@ -214,7 +214,9 @@ class Console:
         entry = ttk.Spinbox(row, from_=1, to=15, increment=0.5, textvariable=self.micro_duration, width=6)
         entry.pack(side='right')
         self.widgets.append((entry,'normal'))
-        self.button(micro, '手动控制 → 生成并播放', lambda:self.prepare_micro(False), primary=True)
+        row=ttk.Frame(micro);row.pack(fill='x')
+        self.button(row, '手动生成', lambda:self.prepare_micro(False), primary=True).pack_configure(side='left',expand=True)
+        self.button(row, '微笑样板', self.prepare_smile_sample).pack_configure(side='left',expand=True)
         ttk.Separator(micro).pack(fill='x',pady=4)
         ttk.Label(micro,text='AI动作指令（时长写在指令中）').pack(anchor='w')
         self.motion_prompt = tk.Text(micro,width=27,height=3,font=('Microsoft YaHei UI',10),wrap='word')
@@ -283,6 +285,7 @@ class Console:
         widget = ttk.Button(parent, text=text, command=command, style="Primary.TButton" if primary else "TButton")
         widget.pack(fill="x", pady=4)
         self.widgets.append((widget, "normal"))
+        return widget
 
     def reload_presets(self):
         self.presets = presets()
@@ -533,6 +536,18 @@ class Console:
         self.plan_view.delete('1.0','end')
         self.plan_view.insert('end',describe(plan)+'\n\n'+json.dumps(plan,ensure_ascii=False,indent=2))
         self.plan_view.configure(state='disabled')
+
+    def prepare_smile_sample(self):
+        if self.busy:return
+        try:
+            from smile_sample import smile_plan
+            settings=self.payload()['settings']
+            quality={k:settings[k] for k in ('width','height','fps','samples','hair','camera') if k in settings}
+            self.micro_character.set('写实扫描头部')
+            self.show_plan(smile_plan())
+            self.start('micro',request=dict(mode='smile-sample',character='scanned-head',quality=quality))
+        except (ValueError,KeyError) as error:
+            self.status.set('微笑样板参数无效：'+str(error))
 
     def prepare_micro(self, ai):
         if self.busy:

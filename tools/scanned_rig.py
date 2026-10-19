@@ -11,7 +11,8 @@ from mathutils import Matrix,Vector
 
 ROOT=Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:sys.path.insert(0,str(ROOT))
-from scan_binding import smooth,jaw_weights,blink_delta,smile_delta,hairline
+from scan_binding import (smooth,jaw_weights,blink_delta,hairline,
+                          smile_corner_delta,smile_cheek_delta,smile_lid_delta,smile_open_delta)
 from micro_control import sample_plan,validate_plan
 
 CHANNELS=('eye_close','gaze_x','gaze_y','smile','mouth_open','nod')
@@ -169,9 +170,15 @@ def build(hair=True):
         obj=bpy.data.objects[name]
         key,changed=shape(obj,'EyeClose',lambda p:blink_delta(p,landmarks['eye_centers']))
         driver(key,'value',rig,'v',{'v':'eye_close'});counts[name]=changed
+        key,changed=shape(obj,'SmileLids',lambda p:smile_lid_delta(p,landmarks['eye_centers']))
+        driver(key,'value',rig,'s*(1-b)',{'s':'smile','b':'eye_close'});counts[name+'_SmileLids']=changed
         if name!='Head':armature(obj,rig,[{'Head':1} for _ in obj.data.vertices])
-    key,changed=shape(head,'Smile',smile_delta)
-    driver(key,'value',rig,'v*(1-.4*m)',{'v':'smile','m':'mouth_open'});counts['Smile']=changed
+    for name,delta in (('SmileCorners',smile_corner_delta),('SmileCheeks',smile_cheek_delta)):
+        key,changed=shape(head,name,delta)
+        driver(key,'value',rig,'s',{'s':'smile'});counts[name]=changed
+    key,changed=shape(head,'SmileOpenCorrective',smile_open_delta)
+    driver(key,'value',rig,'s*m',{'s':'smile','m':'mouth_open'});counts['SmileOpenCorrective']=changed
+    rig['smile_style']='friendly-v2: corners + cheek volume + mild eyelid narrowing; explicit blink overrides lids'
     armature(bpy.data.objects['Brows'],rig,[{'Head':1} for _ in bpy.data.objects['Brows'].data.vertices])
     teeth=bpy.data.objects['Teeth']
     # Separate tooth/gum islands before assigning upper/lower jaw; never split a tooth by height.
@@ -211,7 +218,7 @@ def build(hair=True):
                 hair=build_hair(head,rig,landmarks) if hair else None)
     if report['upper_lip_weight']>.01 or report['lower_lip_weight']<.99:
         raise ValueError('Anatomical lip separation failed')
-    scene['no_facial_rig']=False;scene['scan_rig_revision']='v1';scene['scan_rig_report']=json.dumps(report)
+    scene['no_facial_rig']=False;scene['scan_rig_revision']='smile-v2';scene['scan_rig_report']=json.dumps(report)
     rig['controls_help']='eye_close / gaze_x / gaze_y / smile / mouth_open / nod; safe simple drivers'
     bpy.context.view_layer.objects.active=rig
     for obj in bpy.context.selected_objects:obj.select_set(False)
