@@ -1,0 +1,98 @@
+import {H1,H2,H3,Text,Stack,Row,Grid,Divider,Button,Pill,Table,Card,CardHeader,CardBody,useHostTheme,useState} from 'cursor/canvas';
+
+const phases = [
+  {id:'G0',title:'冻结首版与证据',status:'可开始',work:'联网、原生、固定头肩、文字输入与语音输出；一个角色，Windows 与一台实际 Android 先导，iOS 后续独立验证。',proof:'定义开发集、留出集、版本清单、质量门槛与结果目录。',exit:'完成必须关联输入、角色、模板、工具与客户端版本。',fallback:'不把未完成能力标成已实现。'},
+  {id:'G1',title:'资产与设备部署',status:'前置风险实验',work:'使用未精修正式角色，在 Windows 和实际 Android 的打包程序里执行闭眼、视线、张嘴、微笑及一个组合。可远程制作和打包。',proof:'记录冷启动、材质/绑定正确性、包体、峰值内存和目标渲染路径的缓存样片。',exit:'数据可加载、五种动作正确，资源可容纳；此处不做速度排名。',fallback:'先简化质量档；仍失败则缩小设备范围、验证轻量绑定，或明确采用云串流。建议用5—10个工作日止损，不是完成承诺。'},
+  {id:'G2',title:'母版与设备版真实感',status:'待 G1',work:'同一角色做灰模五视角、三灯光、眼口特写，并比较设备端实际材质与几何。',proof:'开发集对照和独立观看者分项反馈；不能用电影级离线图代替设备质量。',exit:'静态形态、眼睛、皮肤、轮廓分别通过约定门槛。',fallback:'先修资产与材质，模板数量不解决静态失真。'},
+  {id:'G3',title:'最小微控制与组合',status:'待 G2',work:'约12—20个耦合原型，加呼吸/注视控制器；显式标记通道、接触、有效域、互斥和过渡。',proof:'100个固定种子组合、取消、交叠动作，以及10分钟待机的缓存样片。',exit:'参数有界、输入可复现；无明显眼唇穿插、跳变和机械重复。',fallback:'收紧同时动作、补校正与专用过渡；不要无限增加随机或库存。'},
+  {id:'G4',title:'中文语音与嘴型',status:'待 G3',work:'固定外部 TTS 声音，先整句生成；依据实际音频和对齐生成口周曲线，再叠加眉眼表演。',proof:'20条开发台词＋至少10条留出台词，覆盖闭唇、圆唇、停顿及微笑说话。',exit:'候选事件偏差 p95 ≤80ms，另做接触与自然度人工抽检。是项目目标，不是厂商保证。',fallback:'分别定位语音对齐、映射和形变问题；编辑器面驱必须证明能导出端侧可执行数据。'},
+  {id:'G5',title:'AI意图与原生交互',status:'待 G4',work:'先模拟意图，再真实API；LLM输出文本/高层意图，本地按音频时钟编译、约束、混合与取消。',proof:'至少30回合，含非法意图、纯文本、超时、晚到结果、暂停、停止及新回合替换。',exit:'错误意图中性回退；语音失败保留文本；旧任务不抢播。',fallback:'规则表演仍可完成对话，不让一次结构化输出失败摧毁整个交互。'},
+  {id:'G6',title:'后置性能与持续运行',status:'质量通过后',work:'目标端真实三维运行，逐设备测试，不用视频缓存冒充实时渲染。',proof:'候选30fps；30分钟持续运行；报告帧耗时、温升/降频、内存、包体、冷启动及分阶段交互延迟。',exit:'按实际设备和档位发布支持清单，速度门槛需试验前确认。',fallback:'优化发片过绘、阴影、材质与变形；不能兼顾时收缩范围或改变交付模式。'},
+  {id:'G7',title:'扩展模板与换外观',status:'最后扩展',work:'先2张脸×2发型×1身体，再增加体型和服装。复用语义，分别校正绑定与接触。',proof:'所有新增角色跑已有开发/留出集，并抽检组合。',exit:'新资产不破坏眼睑、嘴型、发根、颈部连接和动作。',fallback:'缩小参数域或单独适配；不承诺任意部件直接拼接。'}
+];
+
+const questions = [
+  ['缓存足够多，能覆盖一切吗？','不能。8个部位各3状态就有6,561组合。缓存控制原型，运行时按限制组合；视频只做验收或重复内容。','反证：换一句未见台词、暂停或转移视线，仍应连续执行。'],
+  ['每个部位都真，合起来就真吗？','不一定。嘴角、面颊、下颌，眼球与眼睑互相耦合，需要校正与接触约束。','反证：微笑说闭唇音、转头同时眨眼。失败就补修正，不加随机。'],
+  ['让LLM逐帧指挥是不是更聪明？','本方案不用这个假设。网络与输出波动会传入动画；LLM负责态度和意图，本地负责连续执行。','反证：停止API后，待机/注视/眨眼仍自然运行。'],
+  ['任意回答能靠嘴型模板吗？','基础口型可复用，但新回答需要按实际音频生成时间化曲线与发音衔接。','反证：留出台词、不同语速和长停顿；音量循环不算通过。'],
+  ['MetaHuman母版像真人，手机也一样吗？','不能推导。官方移动参考是无光追、发片、LOD3、2K纹理；降级损失须在目标路径对照。','反证：母版与设备版同动作同画幅，分别评价眼嘴和皮肤。'],
+  ['控制数据小，手机就轻松吗？','不能。模型变形、材质、发片、阴影与持续热功耗仍在本地。','反证：目标手机真实三维连续运行30分钟，观察帧耗时和内存。'],
+  ['换脸以后能直接复用全部动作吗？','可以复用语义，不能保证同一关节数值产生相同接触和表情。','反证：第二张脸重复闭眼、闭唇和微笑说话；必须单独标定。'],
+  ['短样片好看就能交互吗？','不能。连续状态、晚到数据、暂停和取消是独立问题。','反证：30回合、异常API、快速新回合，不抢播、不突变。'],
+  ['普通设备范围可以先不定吗？','可以暂缓性能优化，但不能暂缓资产可部署验证。没有型号清单就没有可证伪的兼容性声明。','反证：Windows与实际Android包先运行；iOS另需工具链和设备。'],
+  ['用MetaHuman曲线训练自己的AI可以吗？','不应默认可以。当前EULA对MetaHuman数据用于AI数据库、训练/测试有明确限制。','路径：对话AI只接文本与抽象意图；资产留在执行层。具体用途依据授权确认。'],
+  ['一个人能完成吗？','可推进受控单角色首版，无法承诺同时完成影视级任意人物、全设备与自由动作。','路径：不重写DCC编辑器；先G1试验，卡住的精修购买资产或局部外包。']
+];
+
+const sources = [
+ ['MetaHuman 平台与LOD规格','https://dev.epicgames.com/documentation/en-us/metahuman/platform-support-and-lod-specifications-for-metahumans'],
+ ['DNA与RigLogic驱动','https://dev.epicgames.com/documentation/en-us/metahuman/metahuman-dna-rig-definition-and-rig-operation'],
+ ['非语言行为系统研究（2025）','https://arxiv.org/abs/2501.10713'],
+ ['SplattingAvatar研究（2024）','https://arxiv.org/abs/2403.05087'],
+ ['iOS构建环境','https://dev.epicgames.com/documentation/en-us/unreal-engine/ios-ipados-and-tvos-development-requirements-for-unreal-engine'],
+ ['Unreal EULA第6(e)','https://www.unrealengine.com/eula/unreal']
+];
+
+export default function Feasibility(){
+ const t=useHostTheme(); const [tab,setTab]=useState(0); const [gate,setGate]=useState(1); const [templates,setTemplates]=useState(30);
+ const p=phases[gate]; const bytes=templates*2*60*60*4;
+ return <Stack gap={20} style={{padding:28,maxWidth:1160,margin:'auto',background:t.bg.editor,color:t.text.primary,lineHeight:1.75}}>
+  <Text tone="secondary" size="small">2026-10-19 · 单人开发 · 原生应用 · 质量先以缓存验收</Text>
+  <H1>微控制数字人：有条件可行，先证明组合与端侧资产</H1>
+  <Text>已确认首版：联网、固定头肩、文字输入、语音输出。核心是可组合的控制曲线、角色校正和确定性执行器；LLM只给高层意图。手机支持范围需要实际型号，不承诺所有设备或影视近景质量。</Text>
+  <Grid columns="repeat(auto-fit,minmax(240px,1fr))" gap={24}>
+   <Stack gap={7}><H2>已经证明</H2><Text>Windows：DeepSeek → SAPI → 离线人物视频 → 缓存 → 原生播放。160帧、6.67秒；某次同请求后端复用约24.6ms。</Text><Text tone="secondary" size="small">来源：本机 work/acceptance/deepseek-live-desktop-validation.json。复用耗时不是手机帧率、首帧或新回答延迟。</Text></Stack>
+   <Stack gap={7}><H2>必须另证</H2><Text>正式角色真实感、中文音素级嘴型、微动作连续组合、手机三维部署、长期互动、换脸标定。</Text><Text tone="secondary" size="small">53项已有自动测试证明技术逻辑，不证明这些产品目标。</Text></Stack>
+  </Grid>
+  <Divider/>
+  <Row wrap gap={8}>{['架构决策','逐项反驳','阶段门槛','数量级计算','验收与来源'].map((label,i)=><Pill key={label} active={tab===i} onClick={()=>setTab(i)}>{label}</Pill>)}</Row>
+  {tab===0&&<Stack gap={18}>
+   <H2>制作、编排、执行与验收分层</H2>
+   <Text>正式角色与真人参考 → 可编辑模板/角色标定 → 版本化资产包 → 本地连续控制与混合 → 设备三维渲染。标准片段离线缓存，供人工对照。</Text>
+   <Text>用户文字 → 服务端LLM文本/意图 → TTS音频与对齐 → 校验/编译行为计划 → 客户端音频时钟执行。LLM不产生逐帧肌肉指令，晚到任务不得抢播。</Text>
+   <H3>用人体类比明确分工</H3>
+   <Text>云端AI是高层大脑，本地编排器是运动协调，时标协议是神经，接触/眼睑/姿态约束是反射，骨架与校正变形是运动器官。客户端根据当前姿态与音频时钟反馈调整，不能只有单向指令。</Text>
+   <Text>服饰和头发有历史依赖，任意动作不能直接复用固定物理缓存。首版短发/发片、简单上衣、有限次级运动；复杂长发与布料后加。</Text>
+   <Table headers={['路线','用途与决定','必须支付的代价']} rows={[
+    ['全视频缓存','保留作质量验收和重复内容','无法穷举新台词、视角和姿态过渡'],
+    ['本地三维＋模板','首选；先验证Unreal/MetaHuman原生路径','资产轻量化、混合校正、客户端渲染'],
+    ['云端渲染串流','可选退路，需明确改变交付模式','持续GPU、带宽、网络和并发成本'],
+    ['神经头像／Gaussian Splatting','研究备选，不作为首版依赖','采集、编辑与换外观、端侧控制需另证']
+   ]}/>
+   <H3>缓存控制原型，保留耦合与约束</H3><Text>连续控制器负责注视/呼吸；耦合模板负责自然表情和姿态；语音负责音频对齐口周曲线。大姿态差异用专门过渡，不用简单相加或全局归一化解决接触。</Text>
+   <Text>API密钥留服务端；客户端持会话凭据。首版整句TTS，先证明音画协调，再增加流式和麦克风输入。</Text>
+  </Stack>}
+  {tab===1&&<Stack gap={20}><H2>关键反例与可证伪实验</H2>{questions.map(([q,a,check])=><section key={q}><H3>{q}</H3><Text>{a}</Text><Text tone="secondary">{check}</Text></section>)}</Stack>}
+  {tab===2&&<Stack gap={18}>
+   <Row wrap gap={8}>{phases.map((x,i)=><Button key={x.id} variant={i===gate?'primary':'secondary'} onClick={()=>setGate(i)}>{x.id}</Button>)}</Row>
+   <H2>{p.id} · {p.title}</H2><Text tone="secondary">{p.status} · 均为待执行门槛，不是已完成清单</Text>
+   <Text>{p.work}</Text><Card><CardHeader>应保存的证据</CardHeader><CardBody><Text>{p.proof}</Text></CardBody></Card>
+   <H3>通过条件</H3><Text>{p.exit}</Text><H3>失败后怎么处理</H3><Text>{p.fallback}</Text>
+   <Divider/><Text>全面速度优化在G6。G1只提前证明资产与打包路径成立，避免精修大量无法部署的内容。每轮只推进一个实验，未通过不扩库。</Text>
+  </Stack>}
+  {tab===3&&<Stack gap={18}>
+   <H2>曲线可以小，整个角色仍可能重</H2>
+   <Text>以下均为假设计算，不是手机实测。可切换模板数量查看原始标量曲线容量。</Text>
+   <Row wrap gap={8}>{[20,30,100,1000].map(n=><Button key={n} variant={n===templates?'primary':'secondary'} onClick={()=>setTemplates(n)}>{n}个模板</Button>)}</Row>
+   <Text weight="semibold">{templates} × 2秒 × 60采样/秒 × 60通道 × 4字节 = {bytes.toLocaleString()}字节，约{(bytes/1048576).toFixed(3)} MiB</Text>
+   <Text tone="secondary">只计float32标量采样，不含元数据、模型、纹理、校正与额外通道；稀疏存储可以更小。</Text>
+   <Table headers={['透明假设','计算结果','含义']} rows={[
+    ['8部位，各3状态','6,561组合；最多43,040,160有向过渡','限制合法组合，不穷举视频'],
+    ['1,000段×5秒×2Mbit/s','1.25GB，忽略音频/容器','数量多仍不覆盖开放对话'],
+    ['50,000顶点×60稠密形变×XYZ×float32','36,000,000字节','这还只是位移数据'],
+    ['6张2K RGBA8贴图含完整mip','约128MiB，未压缩','纹理/材质预算须独立考虑']
+   ]}/>
+   <Text>网络只传意图和时间化曲线，不代表GPU不工作。发片透明过绘、眼部/皮肤材质、关节变形与持续热功耗都要实测。</Text>
+  </Stack>}
+  {tab===4&&<Stack gap={18}>
+   <H2>质量、功能和速度分别验收</H2>
+   <Text>固定角色、画幅、音频与灯光。对比简单基础表现、人工精修上限、自动模板编排；先3—5人找问题，再8—12名非开发者探索性评价。20条开发台词＋至少10条留出，避免只调好精选样片。</Text>
+   <Text>候选质量门槛：分项中位数≥4/5；至少80%观看者未标记明显穿插、跳变或循环。候选画音门槛：标注事件绝对偏差p95≤80ms。均需实验前冻结，不能当作当前成绩或“无法分辨真人”的证明。</Text>
+   <Text>G6候选30fps（33.3ms/帧），持续30分钟；另记提交→文本→首个声音→同步画面。命中缓存与新回答分别统计。联网不代表低延迟已通过。</Text>
+   <H3>外部依据与适用边界</H3>{sources.map(([name,url])=><a key={url} href={url} style={{color:t.text.link}}>{name}</a>)}
+   <Text tone="secondary">官方规格只支持能力边界；论文只证明其研究条件下的结果。当前EULA限制MetaHuman数据用于AI训练/测试等用途，需按实际协议确认。对话AI与执行资产分离，不将曲线或角色输出当外部模型训练数据。</Text>
+   <Text tone="secondary">完整论证、缓存依赖、失败退路与单人工作方式见仓库 docs/MICROCONTROL_FEASIBILITY.md。本看板为本轮规划，旧看板中的多人实时交付期限不适用于此首版。</Text>
+  </Stack>}
+ </Stack>;
+}
