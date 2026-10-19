@@ -167,6 +167,29 @@ DeepSeek 采用官方 `https://api.deepseek.com/chat/completions`，模型输入
 
 同键生成通过进程锁拒绝重复执行。断电或强制终止后若留下 `.locks/<key>.lock`，确认记录的 PID 已退出后手动移除该锁再重试。发布替换失败会尝试恢复旧视频，已有缓存不会因正常生成失败被清空。渲染中断需重新生成，尚不支持从 PNG 断点续渲。技术检查不能代替写实质量、真实音画偏差与人工流畅度验收。
 
+## 写实静态头部基准
+
+采用 [3D Scan Store 免费头部样本](https://www.3dscanstore.com/blog/Free-3D-Head-Model)。官方授权为个人使用，商用需另行联系厂商；模型、原始贴图和衍生工程仅保存在本机忽略目录，不随 Git 分发。该样本没有头发、面部骨骼或表情形变，当前桌面五项控制仍使用原技术人偶，写实头部尚待绑定。
+
+完整原包在 `.cache/assets/3dscanstore/free-head.zip`，原始解压目录为同级 `original/`。下载校验记录在 `free-head.inventory.json`，含实际 URL、大小、SHA-256 和全部文件清单；ZIP 中每个文件通过 CRC 校验。原始 Blender 场景为 `original/Blender/Blender Scene.blend`，其默认设置是 GPU / 4096 采样 / 2800×1216 的眼部特写，不建议直接在本机启动最终渲染。
+
+复现命令（解压命令只对空目标执行，避免覆盖原始资产）：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-assets.txt
+.\.venv\Scripts\python.exe tools/download_free_head.py
+.\.venv\Scripts\python.exe tools/extract_free_head.py
+.\.venv\Scripts\python.exe static_head.py
+```
+
+`static_head.py` 另做最长边 2048 的 PNG 贴图副本，保留原始 JPG/TGA/置换贴图和原始工程。渲染使用 Cycles CPU、4 线程、64 采样、降噪、768×960，视口降低细分并使用实体模式；额外保留原厂镜头、材质和灯光的低负载兼容参考。生成正面及相机左右各45度的三张静帧、拼图、报告和内嵌预览贴图的 `head-preview.blend`。左右指相机在画面坐标中的位置，不是角色的解剖左右。原始面部材质与色彩空间保持不变。
+
+最新结果路径由 `work/realistic-head/latest.json` 给出，内容缓存位于 `.cache/static-head/<hash>/`。源模型、JPG/HDRI 内容、渲染脚本、Blender 工具和参数参与缓存，第二次执行校验文件哈希后跳过贴图生成及 Blender 渲染。提高采样可用 `--samples 128`，提高贴图可用 `--texture-maximum 4096`，会建立新的缓存。静态基准不会替换已有技术人偶或清除旧视频缓存。
+
+本机 Clash Verge 的当前订阅已添加资源域名的精确 `DIRECT` 规则；维护脚本为 `tools/configure_asset_direct.py`，仅操作当前订阅规则和运行配置，验证后通过本地管道热加载，不开启网络控制端口。原配置备份在 `work/local-config-backups/`，其中可能含订阅凭据，不应上传或提交。该脚本按本机配置目录设计，不应在其他电脑直接照搬。下载器使用官方同一 S3 桶的兼容域名，校验对象 ETag、字节区间、大小、完整 ZIP CRC 和最终 SHA-256，并支持保留分段继续下载。
+
+本机验收记录位于 `work/realistic-head/acceptance.json`：完整原包 2,019,571,774 字节，原始资源哈希未变，三视角图片通过解码检查，内嵌18个图像资源的预览工程重新打开成功，第二次调用命中缓存；75项自动测试通过。静帧只是后续材质、灯光和动画改进的基准，不代表完整数字人的真人化已完成。
+
 ## 接下来需要接入
 
 1. 外部 ASR / TTS / 对齐服务实接，记录模型和声音版本。真实 DeepSeek 对话已通过桌面按钮完成回复、SAPI 语音、160 帧视频生成与自动播放，并验证手动缓存重播和无密钥全层缓存复用；本机记录见 `work/acceptance/deepseek-live-desktop-validation.json`。模型别名升级后可通过启动环境中的 `DEEPSEEK_MODEL_REVISION` 更换对话缓存版本。
@@ -177,5 +200,5 @@ DeepSeek 采用官方 `https://api.deepseek.com/chat/completions`，模型输入
 ## 验证
 
 ```powershell
-python -m unittest -v
+.\.venv\Scripts\python.exe -m unittest discover -v
 ```
