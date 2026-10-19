@@ -1,0 +1,2 @@
+# Keep the topology/hairstyle asset identity stable across Windows branch checkouts.
+configs/scanned-head-landmarks.json text eol=lf

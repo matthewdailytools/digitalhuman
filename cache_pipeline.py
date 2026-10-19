@@ -31,6 +31,9 @@ def read_config(path):
     if config["generator"].get("id") == "blender-offline-v1":
         from render_settings import resolve
         config = resolve(config)
+    elif config['generator'].get('id')=='scanned-blender-v1':
+        from scanned_settings import resolve
+        config=resolve(config)
     return config
 
 

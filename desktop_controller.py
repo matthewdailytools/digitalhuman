@@ -76,6 +76,11 @@ def selection(data):
             config["performance"][name] = settings[name]
     if "motion" in settings:
         config["performance"]["motion_revision"] = settings["motion"]
+    if config['character']['id']=='scanned-head':
+        from scanned_settings import resolve as resolve_scan
+        config['quality']['skin']='scan-pbr'
+        for name in ('strength','gaze','enter','leave'):config['performance'].pop(name,None)
+        return resolve_scan(config)
     return resolve(config)
 
 
@@ -123,8 +128,12 @@ class Jobs:
             if kind == "render":
                 path = directory / "config.json"
                 path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+                command_file=PROJECT/'renderer-command.json'
+                if config['character']['id']=='scanned-head':
+                    command_file=directory/'renderer-command.json'
+                    command_file.write_text(json.dumps(["{python}","{project}/scanned_renderer.py","--config","{config}","--output","{output}"]),'utf-8')
                 command = [python, str(PROJECT / "cache_pipeline.py"), "prepare", "--config", str(path),
-                           "--command-file", str(PROJECT / "renderer-command.json")]
+                           "--command-file", str(command_file)]
                 if force:
                     command.append("--force")
             elif kind in ("text", "answer", "micro"):

@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "source_blend_sha256": "7e069f5508aaaf53f8ea0ce560741b54b5ddbc2e90128141c6c94edd22bd54a9",
+  "vertex_count": 12466,
+  "upper_lip_seed": 12272,
+  "lower_lip_seed": 12271,
+  "upper_lip_rim": 12282,
+  "lower_lip_rim": 12280,
+  "eye_centers": [[2.9731183, -9.804594, 29.8187656], [-2.9607267, -9.78459, 29.8532295]],
+  "eye_radius": 1.53,
+  "jaw_pivot": [0, -4.3, 24.0],
+  "head_pivot": [0, -1, 18],
+  "hair_seed": 72,
+  "hair_strands": 42000,
+  "hair_points": 8
+}

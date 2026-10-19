@@ -75,7 +75,7 @@ class Console:
         self.suppress = False
         self.image = None
         root.title("数字人测试控制台")
-        root.geometry(f"{min(1180, root.winfo_screenwidth()-60)}x{min(820, root.winfo_screenheight()-100)}")
+        root.geometry(f"{min(1180, root.winfo_screenwidth()-60)}x{min(820, root.winfo_screenheight()-80)}")
         root.minsize(1020, 660)
         root.configure(bg="#f2f4f1")
         style = ttk.Style(root)
@@ -187,6 +187,9 @@ class Console:
         ttk.Button(ai, text="清空会话上下文", command=lambda: self.context.clear()).pack(fill='x', pady=3)
         ttk.Label(ai, text="mock 为固定模拟回复；语音为系统 SAPI，嘴型按音量近似，非音素对齐。ASR 尚未接入。", wraplength=255).pack(anchor="w", pady=6)
         ttk.Label(micro, text='五项独立控制 · 无对白缓存视频', wraplength=255).pack(anchor='w')
+        self.micro_character=tk.StringVar(root,'写实扫描头部' if (PROJECT/'work/realistic-head/latest.json').is_file() else '技术人偶')
+        entry=ttk.Combobox(micro,textvariable=self.micro_character,values=['写实扫描头部','技术人偶'],state='readonly')
+        entry.pack(fill='x',pady=3);self.widgets.append((entry,'readonly'))
         self.micro_vars = {name: tk.StringVar(root, '0') for name in ('eye_close','smile','mouth_open','nod')}
         grid = ttk.Frame(micro)
         grid.pack(fill='x', pady=5)
@@ -212,16 +215,16 @@ class Console:
         entry.pack(side='right')
         self.widgets.append((entry,'normal'))
         self.button(micro, '手动控制 → 生成并播放', lambda:self.prepare_micro(False), primary=True)
-        ttk.Separator(micro).pack(fill='x',pady=7)
+        ttk.Separator(micro).pack(fill='x',pady=4)
         ttk.Label(micro,text='AI动作指令（时长写在指令中）').pack(anchor='w')
-        self.motion_prompt = tk.Text(micro,width=27,height=4,font=('Microsoft YaHei UI',10),wrap='word')
+        self.motion_prompt = tk.Text(micro,width=27,height=3,font=('Microsoft YaHei UI',10),wrap='word')
         self.motion_prompt.pack(fill='x',pady=4)
         self.motion_prompt.insert('1.0','用5秒依次闭眼、看向画面左、微笑、张嘴，最后轻轻点头。')
         self.widgets.append((self.motion_prompt,'normal'))
         entry=ttk.Combobox(micro,textvariable=self.provider,values=['mock','deepseek'],state='readonly')
         entry.pack(fill='x',pady=3)
         self.widgets.append((entry,'readonly'))
-        ttk.Label(micro,text='mock仅固定演示，不理解指令。\nDeepSeek模型和密钥在“AI / 验收”设置。\n分辨率、采样和镜头沿用“渲染”页。',wraplength=255).pack(anchor='w',pady=3)
+        ttk.Label(micro,text='AI模型与密钥在“AI / 验收”。\n写实头发选静态或关闭。\nmock为固定演示。',wraplength=255).pack(anchor='w',pady=3)
         self.button(micro,'AI 指令 → 生成并播放',lambda:self.prepare_micro(True),primary=True)
         tools = ttk.Frame(right)
         tools.pack(fill="x", pady=(0, 8))
@@ -538,7 +541,8 @@ class Console:
             # Quality only: do not inherit the previous preset's audio or performance.
             settings = self.payload()['settings']
             quality = {k:v for k,v in settings.items() if k in ('profile','width','height','fps','samples','hair','camera')}
-            request = dict(mode='ai' if ai else 'manual',quality=quality)
+            request = dict(mode='ai' if ai else 'manual',quality=quality,
+                           character='scanned-head' if self.micro_character.get()=='写实扫描头部' else 'procedural-head')
             if ai:
                 request.update(instruction=self.motion_prompt.get('1.0','end').strip(),provider=self.provider.get(),model=self.model.get())
             else:
