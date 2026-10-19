@@ -17,6 +17,7 @@ from quality_profiles import PROFILES
 from behavior import EXPRESSIONS, MOTIONS, GAZES
 from micro_control import manual_plan, describe
 from credential_store import ApiCredentials, CredentialError
+from realtime_preview import RealtimePreview,CHANNELS
 
 
 class Player:
@@ -74,6 +75,7 @@ class Console:
         self.busy = False
         self.suppress = False
         self.image = None
+        self.live=RealtimePreview();self.live_pending=None
         root.title("数字人测试控制台")
         root.geometry(f"{min(1180, root.winfo_screenwidth()-60)}x{min(820, root.winfo_screenheight()-80)}")
         root.minsize(1020, 660)
@@ -108,6 +110,8 @@ class Console:
         tabs.add(advanced, text="表情 / 动作")
         tabs.add(micro, text="五项控制")
         tabs.add(ai, text="AI / 验收")
+        realtime=ttk.Frame(tabs,padding=8);tabs.add(realtime,text='实时')
+        self.realtime_tab=realtime
         self.tabs, self.micro_tab = tabs, micro
         right = ttk.Frame(main)
         right.grid(row=0, column=1, sticky="nsew")
@@ -228,6 +232,31 @@ class Console:
         self.widgets.append((entry,'readonly'))
         ttk.Label(micro,text='AI模型与密钥在“AI / 验收”。\n写实头发选静态或关闭。\nmock为固定演示。',wraplength=255).pack(anchor='w',pady=3)
         self.button(micro,'AI 指令 → 生成并播放',lambda:self.prepare_micro(True),primary=True)
+        ttk.Label(realtime,text='扫描脸实时预览 · 独立 Blender 窗口',wraplength=255).pack(anchor='w')
+        self.live_values={name:tk.DoubleVar(root,0) for name in CHANNELS}
+        self.live_labels={}
+        labels=dict(eye_close='闭眼',smile='微笑',mouth_open='张嘴',nod='点头姿态',gaze_x='注视左右',gaze_y='注视上下')
+        for name in ('smile','mouth_open','eye_close','gaze_x','gaze_y','nod'):
+            row=ttk.Frame(realtime);row.pack(fill='x',pady=2)
+            ttk.Label(row,text=labels[name]).pack(side='left')
+            value=tk.StringVar(root,'0.00');self.live_labels[name]=value
+            ttk.Label(row,textvariable=value).pack(side='right')
+            ttk.Scale(realtime,from_=-1 if name.startswith('gaze') else 0,to=1,
+                      variable=self.live_values[name],command=self.live_changed).pack(fill='x')
+        self.live_mode=tk.StringVar(root,'快速实体')
+        entry=ttk.Combobox(realtime,textvariable=self.live_mode,values=['快速实体','实时材质'],state='readonly')
+        entry.pack(fill='x',pady=5);entry.bind('<<ComboboxSelected>>',self.live_changed)
+        self.live_hair=tk.BooleanVar(root,False)
+        ttk.Checkbutton(realtime,text='显示短发（增加图形负载）',variable=self.live_hair,command=self.live_changed).pack(anchor='w')
+        row=ttk.Frame(realtime);row.pack(fill='x',pady=5)
+        ttk.Button(row,text='打开实时窗口',command=self.live_start).pack(side='left',expand=True,fill='x')
+        ttk.Button(row,text='关闭',command=self.live.stop).pack(side='left')
+        row=ttk.Frame(realtime);row.pack(fill='x')
+        ttk.Button(row,text='微笑演示',command=lambda:self.live_send(sample=True)).pack(side='left',expand=True,fill='x')
+        ttk.Button(row,text='恢复中性',command=self.live_reset).pack(side='left',expand=True,fill='x')
+        self.live_status=tk.StringVar(root,'打开窗口后拖动滑块；不生成视频。')
+        ttk.Label(realtime,textvariable=self.live_status,wraplength=255).pack(anchor='w',pady=5)
+        ttk.Label(realtime,text='快速实体用于动作检查；实时材质为简化 EEVEE 预览，画质与离线成片不同。',wraplength=255).pack(anchor='w')
         tools = ttk.Frame(right)
         tools.pack(fill="x", pady=(0, 8))
         self.badge = ttk.Label(tools, text="检查缓存…", font=("Microsoft YaHei UI", 11, "bold"))
@@ -279,6 +308,7 @@ class Console:
             variable.trace_add("write", lambda *args, key=name: self.changed(key))
         self.reload_presets()
         root.after(150, self.poll)
+        root.after(200,self.live_poll)
         root.protocol("WM_DELETE_WINDOW", self.close)
 
     def button(self, parent, text, command, primary=False):
@@ -549,6 +579,46 @@ class Console:
         except (ValueError,KeyError) as error:
             self.status.set('微笑样板参数无效：'+str(error))
 
+    def live_start(self):
+        if self.busy:
+            self.live_status.set('请等待当前离线任务完成后打开实时窗口。');return
+        try:
+            self.player.stop();self.live.start();self.live_send()
+        except Exception as error:self.live_status.set(str(error))
+
+    def live_changed(self,*args):
+        for name,value in self.live_values.items():self.live_labels[name].set(f'{value.get():.2f}')
+        if self.live_pending:self.root.after_cancel(self.live_pending)
+        self.live_pending=self.root.after(40,self.live_send)
+
+    def live_send(self,sample=False):
+        if self.live_pending:self.root.after_cancel(self.live_pending)
+        self.live_pending=None
+        try:
+            seq=self.live.publish({k:v.get() for k,v in self.live_values.items()},
+                                 mode='eevee' if self.live_mode.get()=='实时材质' else 'solid',
+                                 hair=self.live_hair.get(),sample=sample)
+            if seq is None:self.live_status.set('请先打开实时窗口。')
+        except Exception as error:self.live_status.set(str(error))
+
+    def live_reset(self):
+        for value in self.live_values.values():value.set(0)
+        self.live_changed()
+
+    def live_poll(self):
+        try:
+            state=self.live.snapshot();phase=state['phase']
+            if phase=='running':
+                fps=state.get('viewport_draw_fps',0)
+                label='微笑演示中' if state.get('sample_playing') else '实时窗口已连接'
+                self.live_status.set(f"{label} · 指令 {state.get('seq',0)}\n最近视口绘制约 {fps:.1f} FPS；滑块连续更新。")
+            elif phase=='loading':self.live_status.set('正在加载扫描脸，请稍候…')
+            elif phase=='stopping':self.live_status.set('正在关闭实时窗口…')
+            elif phase=='failed':self.live_status.set('实时预览失败：'+state['error'][:180])
+            elif self.live.session:self.live_status.set('实时窗口已关闭，可重新打开。')
+        except Exception as error:self.live_status.set(str(error))
+        self.root.after(200,self.live_poll)
+
     def prepare_micro(self, ai):
         if self.busy:
             return
@@ -622,10 +692,18 @@ class Console:
             return
         self.player.stop()
         self.pool.shutdown(wait=False, cancel_futures=True)
+        self.live.stop()
         self.root.destroy()
 
 
 if __name__ == "__main__":
+    import argparse
+    parser=argparse.ArgumentParser(description='数字人桌面控制台')
+    parser.add_argument('--realtime',action='store_true',help='打开实时页并加载 Blender 预览')
+    args=parser.parse_args()
     root = tk.Tk()
-    Console(root)
+    console=Console(root)
+    if args.realtime:
+        console.tabs.select(console.realtime_tab)
+        root.after(250,console.live_start)
     root.mainloop()
